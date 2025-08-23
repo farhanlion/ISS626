@@ -1,0 +1,19 @@
+---
+title: "Hands-on Excercise 1"
+date: "23/8/25"
+date-modified: "last-modified"
+format: html
+execute: 
+  echo: true
+  eval: true
+  warning: false
+  freeze: true
+---
+
+# Overview
+
+VVVVVVV
+
+## Getting Started
+
+SADSADASD
