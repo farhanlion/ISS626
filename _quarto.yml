@@ -6,12 +6,12 @@ website:
   navbar:
     left:
       - text: "Hands-on Exercise"
-      - menu: 
+        menu: 
         - text: "Hands-on Exercise 1"
           href: "Hands-on-Ex/Hands-on_Ex01/Hands-on_Ex01.qmd"
         - text: "Hands-on Exercise 2"
       - text: "In-class Exercise"
-      - menu: 
+        menu: 
         - text: "In-class Exercise 1"
         - text: "In-class Exercise 2"     
     right:
