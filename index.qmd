@@ -1,11 +1,9 @@
 ---
-title: "ISS626sdfguiuyfdsdfgh"
+title: "ISS626"
 ---
 
-This is a Quarto website.
+This is Mohammad Farhan Ahsan's Quarto website.
 
 To learn more about Quarto websites visit <https://quarto.org/docs/websites>.
 
-```{r}
-1 + 1
-```
+
