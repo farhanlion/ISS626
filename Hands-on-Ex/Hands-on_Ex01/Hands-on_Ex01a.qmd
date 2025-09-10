@@ -78,7 +78,7 @@ cyclingpath = st_read(dsn = "data/geospatial",
 
 The message above reveals that there are a total of 4651 features and 19 fields in `cyclingpath` sf data frame. The geospatial entities are capture in *multilinestring* object. Similar to the *MP19_SUBZONE_WEB_PL* shape file, this data set is in in **svy21** projected coordinates system too.
 
-### **1.4.3 Importing GIS data in kml format** 
+### **1.4.3 Importing GIS data in kml format**
 
 Importing kml:
 

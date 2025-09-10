@@ -1,0 +1,201 @@
+---
+title: "Hands-on Excercise 3"
+date: "5/9/25"
+date-modified: "last-modified"
+format: html
+execute: 
+  echo: true
+  eval: true
+  warning: false
+  freeze: true
+---
+
+```{r}
+pacman::p_load(sf, terra, spatstat, sparr, tmap, tidyverse)
+```
+
+## **6.5 Importing and Preparing Study Area**
+
+### **6.5.1 Importing study area**
+
+```{r}
+kbb <- st_read(dsn="data/rawdata",
+               layer = "Kepulauan_Bangka_Belitung") 
+```
+
+```{r}
+kbb_sf <- st_read(dsn="data/rawdata",
+               layer = "Kepulauan_Bangka_Belitung") %>%
+  st_union() %>%
+  st_zm(drop = TRUE, what = "ZM") %>%
+  st_transform(crs = 32748)
+```
+
+### **6.5.2 Converting OWIN**
+
+```{r}
+kbb_owin <- as.owin(kbb_sf)
+kbb_owin
+```
+
+```{r}
+class(kbb_owin)
+```
+
+## **6.6 Importing and Preparing Forest Fire data**
+
+Next, we will import the forest fire data set (i.e. *forestfires.csv*) into R environment.
+
+```{r}
+fire_sf <- read_csv("data/rawdata/forestfires.csv") %>%
+  st_as_sf(coords = c("longitude", "latitude"),
+                       crs = 4326) %>%
+  st_transform(crs = 32748)
+```
+
+convert data type of *acq_date* to numeric.
+
+```{r}
+fire_sf <- fire_sf %>% 
+  mutate(DayofYear = yday(acq_date)) %>%
+  mutate(Month_num = month(acq_date)) %>%
+  mutate(Month_fac = month(acq_date, 
+                           label = TRUE, 
+                           abbr = FALSE))
+```
+
+## **6.7 Visualising the Fire Points**
+
+### **6.7.1 Overall plot**
+
+```{r}
+tm_shape(kbb_sf)+
+  tm_polygons() +
+tm_shape(fire_sf) +
+  tm_dots()
+```
+
+### **6.7.2 Visuaising geographic distribution of forest fires by month**
+
+```{r}
+tm_shape(kbb_sf)+
+  tm_polygons() +
+tm_shape(fire_sf) +
+  tm_dots(size = 0.1) +
+tm_facets(by="Month_fac", 
+            free.coords=FALSE, 
+            drop.units = TRUE)
+```
+
+## **6.8 Computing STKDE by Month**
+
+### **6.8.1 Extracting forest fires by month**
+
+```{r}
+fire_month <- fire_sf %>% 
+  select(Month_num)
+```
+
+### **6.8.2 Creating ppp**
+
+```{r}
+fire_month_ppp <- as.ppp(fire_month)
+fire_month_ppp
+```
+
+```{r}
+summary(fire_month_ppp)
+```
+
+check for duplicates
+
+```{r}
+any(duplicated(fire_month_ppp))
+```
+
+### **6.8.3 Including Owin object**
+
+```{r}
+fire_month_owin <- fire_month_ppp[kbb_owin]
+summary(fire_month_owin)
+```
+
+```{r}
+plot(fire_month_owin)
+```
+
+### **6.8.4 Computing Spatio-temporal KDE**
+
+```{r}
+st_kde <- spattemp.density(fire_month_owin)
+summary(st_kde)
+```
+
+### **6.8.5 Plotting the spatio-temporal KDE object**
+
+```{r}
+tims <- c(7,8,9,10,11,12)
+par(mfcol=c(2,3))
+for(i in tims){ 
+  plot(st_kde, i, 
+       override.par=FALSE, 
+       fix.range=TRUE, 
+       main=paste("KDE at month",i))
+}
+```
+
+## **6.9 Computing STKDE by Day of Year**
+
+### **6.9.1 Creating ppp object**
+
+```{r}
+fire_yday_ppp <- fire_sf %>% 
+  select(DayofYear) %>%
+  as.ppp()
+```
+
+### **6.9.2 Including Owin object**
+
+```{r}
+fire_yday_owin <- fire_yday_ppp[kbb_owin]
+summary(fire_yday_owin)
+```
+
+### **6.9.3** 
+
+```{r}
+kde_yday <- spattemp.density(
+  fire_yday_owin)
+summary(kde_yday)
+```
+
+```{r}
+plot(kde_yday)
+
+```
+
+## **6.10 Computing STKDE by Day of Year: Improved method**
+
+One of the nice function provides in sparr package is `BOOT.spattemp()`. It support bandwidth selection for standalone spatiotemporal density/intensity based on bootstrap estimation of the MISE, providing an isotropic scalar spatial bandwidth and a scalar temporal bandwidth.
+
+Code chunk below uses `BOOT.spattemp()` to determine both the spatial bandwidth and the scalar temporal bandwidth.
+
+```{r}
+set.seed(1234)
+BOOT.spattemp(fire_yday_owin) 
+```
+
+### **6.10.1 Computing spatio-temporal KDE**
+
+```{r}
+kde_yday <- spattemp.density(fire_yday_owin,
+                             h = 9000,
+                             lambda = 19)
+summary(kde_yday)
+```
+
+### **6.10.2 Plotting the output spatio-temporal KDE**
+
+```{r}
+plot(kde_yday)
+```
