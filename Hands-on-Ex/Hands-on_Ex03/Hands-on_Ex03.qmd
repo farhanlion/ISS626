@@ -161,7 +161,7 @@ fire_yday_owin <- fire_yday_ppp[kbb_owin]
 summary(fire_yday_owin)
 ```
 
-### **6.9.3** 
+### **6.9.3**
 
 ```{r}
 kde_yday <- spattemp.density(
