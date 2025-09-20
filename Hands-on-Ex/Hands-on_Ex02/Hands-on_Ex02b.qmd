@@ -1,5 +1,6 @@
 ---
 title: "Hands-on Excercise 2b"
+author: "Mohammad Farhan Ahsan"
 date: "5/9/25"
 date-modified: "last-modified"
 format: html
