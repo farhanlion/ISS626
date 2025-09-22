@@ -190,6 +190,15 @@ write_rds(biz932, "data/rds/biz_932.rds")
 
 ```
 
+Read rds
+
+```{r}
+biz47 <- readRDS("data/rds/biz_47.rds")
+biz551 <- readRDS("data/rds/biz_551.rds")
+biz932 <- readRDS("data/rds/biz_932.rds")
+
+```
+
 Convert from tibble to sf
 
 ```{r}
@@ -274,18 +283,34 @@ kde_biz932 <- density(
 ### KDE for Retail (47)
 
 ```{r}
-plot(kde_biz47,  main = "KDE - Retail Trade (47)")
+kde_biz47 <- density(biz47_ppp,
+                              sigma=1000, 
+                              edge=TRUE,
+                              kernel="gaussian")
+plot(kde_biz47)
 ```
 
 ### KDE for Accommodation (551)
 
 ```{r}
+kde_biz551 <- density(
+  biz551_ppp,
+  sigma = 1000, 
+  edge = TRUE,
+  kernel = "gaussian"
+)
 plot(kde_biz551, main = "KDE - Accommodation (551)")
 ```
 
 ### KDE - Amusement & Recreation (932)
 
 ```{r}
+kde_biz932 <- density(
+  biz932_ppp,
+  sigma = 1000, 
+  edge = TRUE,
+  kernel = "gaussian"
+)
 plot(kde_biz932, main = "KDE - Amusement & Recreation (932)")
 ```
 
@@ -358,4 +383,13 @@ tm_shape(mpsz_sf) +
 tm_shape(biz932_sf) +
   tm_dots(col = "green")
 
+```
+
+```{r}
+kde_biz47 <- density(biz47_ppp,
+                              sigma=1000
+                     , 
+                              edge=TRUE,
+                              kernel="gaussian")
+plot(kde_biz47)
 ```
