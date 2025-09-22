@@ -1,0 +1,67 @@
+---
+title: "extractingRegions"
+format: html
+---
+Extract regions from mpsz
+
+{r}
+extract_kml_field <- function(html_text, field_name) {
+  if (is.na(html_text) || html_text == "") return(NA_character_)
+  
+  page <- read_html(html_text)
+  rows <- page %>% html_elements("tr")
+  
+  value <- rows %>%
+    keep(~ html_text2(html_element(.x, "th")) == field_name) %>%
+    html_element("td") %>%
+    html_text2()
+  
+  if (length(value) == 0) NA_character_ else value
+}
+
+{r}
+mpsz_sf <- mpsz_sf %>%
+  mutate(
+    REGION_N = map_chr(Description, extract_kml_field, "REGION_N"),
+    PLN_AREA_N = map_chr(Description, extract_kml_field, "PLN_AREA_N"),
+    SUBZONE_N = map_chr(Description, extract_kml_field, "SUBZONE_N"),
+    SUBZONE_C = map_chr(Description, extract_kml_field, "SUBZONE_C")
+  ) %>%
+  select(-Name, -Description) %>%
+  relocate(geometry, .after = last_col())
+
+remove islands
+
+{r}
+mpsz_cl <- mpsz_sf %>%
+  filter(SUBZONE_N != "SOUTHERN GROUP",
+         PLN_AREA_N != "WESTERN ISLANDS",
+         PLN_AREA_N != "NORTH-EASTERN ISLANDS")
+
+{r}
+write_rds(mpsz_cl, 
+          "data/rds/mpsz_cl.rds")
+
+{r}
+# --- Retail Trade (47) ---
+tm_shape(mpsz_sf) +
+  tm_polygons() +
+tm_shape(biz47_sf) +
+  tm_dots(col = "red")
+
+{r}
+# --- Accommodation (551) ---
+tm_shape(mpsz_sf) +
+  tm_polygons() +
+tm_shape(biz551_sf) +
+  tm_dots(col = "blue")
+
+{r}
+# --- Amusement & Recreation (932) ---
+tm_shape(mpsz_sf) +
+  tm_polygons() +
+tm_shape(biz932_sf) +
+  tm_dots(col = "green")
+
+
+
