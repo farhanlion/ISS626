@@ -222,7 +222,7 @@ biz932_sf <- st_as_sf(biz932,
 tmap_mode("view")
 
 tm_shape(biz47_sf) +
-  tm_dots(col = "blue", size = 0.1) +
+  tm_dots(col = "blue", size = 0.1) +data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAaCAYAAADFTB7LAAAAcElEQVR4Xu3OwQmAQAxE0bClWYCW5N06tM6V2YPg5CjoF/JhLoHAi6iqn9eOefUbqrYvHY0cQDLyAlKRNyARmYA0ZMLRkAlGQyaU72tkAtlim7r/vJqDUDjlKBROOQyFU2icQuMUGqfQuBEaV1XPOwEx96nYACK8+wAAAABJRU5ErkJggg==
 tm_shape(biz551_sf) +
   tm_dots(col = "red", size = 0.1) +
 tm_shape(biz932_sf) +
@@ -234,6 +234,10 @@ tm_shape(biz932_sf) +
 ```{r}
 mpsz_sf <- st_read("data/rawdata/MasterPlan2019SubzoneBoundaryNoSeaKML.kml") %>% 
   st_zm(drop = TRUE, what = "ZM") %>% st_transform(crs = 3414)
+```
+
+```{r}
+mpsz_cl <- read_rds("data/rds/mpsz_cl.rds")
 ```
 
 ## Convert to ppp from sf for further analysis
@@ -462,4 +466,105 @@ for (i in idx_levels_932) {
 }
 ```
 
-![](images/clipboard-2864854457.png)
+## 2nd order spatial analytics
+
+### Retail
+
+Check for competition
+
+```{r}
+set.seed(1234)
+```
+
+```{r}
+G_biz47  = Gest(biz47_ppp, correction = "border")
+plot(G_biz47 , xlim=c(0,500))
+```
+
+```{r}
+G_biz47_csr <- envelope(biz47_ppp, Gest, nsim = 999)
+
+plot(G_biz47_csr, 
+     main = "Monte Carlo CSR test for Retail Businesses (G-function)",
+     xlab = "Distance (m)", ylab = "G(r)")
+
+```
+
+### Accomodation
+
+```{r}
+set.seed(1234)
+```
+
+```{r}
+# Empirical G with border correction
+G_biz551 <- Gest(biz551_ppp, correction = "border")
+```
+
+```{r}
+# Quick look (limit to 0–500 m like your Retail plot)
+plot(G_biz551, xlim = c(0, 500),
+     main = "G-function – Accommodation (551)",
+     xlab = "Distance r (m)", ylab = "G(r)")
+```
+
+```{r}
+G_biz551_env <- envelope(
+  biz551_ppp,
+  fun       = Gest,
+  nsim      = 999,          # use 999 for final report
+)
+
+
+```
+
+```{r}
+plot(G_biz551_env,
+     main = "Monte Carlo CSR test – G(r) for Accommodation (551)",
+     xlab = "Distance r (m)", ylab = "G(r)")
+```
+
+### Attractions
+
+```{r}
+set.seed(1234)
+
+
+```
+
+```{r}
+F_biz932 <- Fest(biz932_ppp, correction = "border")
+
+
+```
+
+```{r}
+plot(F_biz932, xlim = c(0, 500),
+     main = "F-function – Amusement & Recreation (932)",
+     xlab = "Distance r (m)", ylab = "F(r)")
+```
+
+
+```{r}
+F_biz932_env <- envelope(
+  biz932_ppp,
+  fun       = Fest,
+  nsim      = 999,          # use 999 for final report
+)
+
+```
+
+
+```{r}
+plot(F_biz932_env,
+     main = "Monte Carlo CSR test – F(r) for Amusement & Recreation (932)",
+     xlab = "Distance r (m)", ylab = "F(r)")
+```
+
+### Summary
+From the G-function analysis, we observe that retail businesses (SSIC code 47) exhibit clustering behavior, as indicated by the empirical G-function lying above the CSR envelope. This suggests that retail businesses tend to be located closer to each other than would be expected under a random distribution.
+In contrast, the accommodation businesses (SSIC code 551) show a more random spatial distribution, with the empirical G-function closely following the CSR envelope. This indicates that accommodation providers are more evenly spread out across the area, likely to cater to a wider range of locations for tourists.
+The F-function analysis for amusement and recreation businesses (SSIC code 932) reveals a tendency towards regularity, as the empirical F-function lies below the CSR envelope. This suggests that these businesses are more evenly spaced than would be expected under a random distribution, possibly to avoid direct competition and to cover different market segments.
+Overall, the spatial patterns of these business types reflect their differing operational strategies and market demands. Retail businesses cluster to attract foot traffic, accommodation providers distribute evenly to maximize accessibility, and amusement and recreation businesses space themselves out to minimize competition.
+
+
