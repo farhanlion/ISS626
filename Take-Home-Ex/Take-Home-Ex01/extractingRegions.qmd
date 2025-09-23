@@ -32,7 +32,7 @@ biz932_sf <- st_as_sf(biz932,
 
 Extract regions from mpsz
 
-```{r} 
+```{r}
 extract_kml_field <- function(html_text, field_name) { 
   if (is.na(html_text) || html_text == "") 
     return(NA_character_)
@@ -49,14 +49,12 @@ extract_kml_field <- function(html_text, field_name) {
 }
 ```
 
-
 ```{r}
 mpsz_sf <- st_read("data/rawdata/MasterPlan2019SubzoneBoundaryNoSeaKML.kml") %>% 
   st_zm(drop = TRUE, what = "ZM") %>% st_transform(crs = 3414)
 ```
 
-
-```{r} 
+```{r}
 mpsz_sf <- mpsz_sf %>%
   mutate(
     REGION_N   = map_chr(Description, extract_kml_field, "REGION_N"),
@@ -70,7 +68,7 @@ mpsz_sf <- mpsz_sf %>%
 
 We parse out REGION, PLANNING AREA, and SUBZONE attributes.
 
-```{r} 
+```{r}
 # remove islands
 mpsz_cl <- mpsz_sf %>%
   filter(
@@ -79,29 +77,36 @@ mpsz_cl <- mpsz_sf %>%
     PLN_AREA_N != "NORTH-EASTERN ISLANDS"
   )
 ```
+
 Save cleaned dataset
 
 Write the filtered shapefile to RDS for later use.
+
 ```{r}
 write_rds(mpsz_cl, "data/rds/mpsz_cl.rds")
 ```
 
-Visualization
-Retail Trade (47)
+Visualization Retail Trade (47)
+
 ```{r}
 # --- Retail Trade (47) --- 
 tm_shape(mpsz_cl) + tm_polygons() + tm_shape(biz47_sf) + tm_dots(col = "red")
 ```
+
 Accommodation (551)
+
 ```{r}
 # --- Accommodation (551) --- 
 tm_shape(mpsz_cl) + tm_polygons() + tm_shape(biz551_sf) + tm_dots(col = "blue")
 ```
+
 Amusement & Recreation (932)
+
 ```{r}
 # --- Amusement & Recreation (932) --- 
 tm_shape(mpsz_cl) + tm_polygons() + tm_shape(biz932_sf) + tm_dots(col = "green")
 ```
+
 Since majority of the points are concentrated in the Central Region, we can zoom into that area for better visualization.
 
 ```{r}
@@ -115,6 +120,7 @@ biz47_sf <- st_transform(biz47_sf, st_crs(centralarea))
 ```
 
 Retail Trade (47)
+
 ```{r}
 # --- Retail Trade (47) ---
 
@@ -123,6 +129,7 @@ tm_shape(centralarea) + tm_polygons() + tm_shape(biz47_sf_in) + tm_dots(col = "r
 ```
 
 Accommodation (551)
+
 ```{r}
 # --- Accommodation (551) ---
 
@@ -132,7 +139,9 @@ biz551_sf <- st_transform(biz551_sf, st_crs(centralarea))
 biz551_sf_in <- st_intersection(biz551_sf, centralarea)
 tm_shape(centralarea) + tm_polygons() + tm_shape(biz551_sf_in) + tm_dots(col = "blue")
 ```
+
 Amusement & Recreation (932)
+
 ```{r}
 # --- Amusement & Recreation (932) ---
 
@@ -146,8 +155,8 @@ tm_shape(centralarea) + tm_polygons() + tm_shape(biz932_sf_in) + tm_dots(col = "
 
 From the visualizations, we can see that the points are concentrated in the Central Region, particularly in areas such as Orchard, Marina Bay, and Bugis. This indicates that these areas are popular for retail trade, accommodation, and amusement & recreation activities. The spatial distribution of these business activities can provide insights into consumer behavior and preferences in Singapore.
 
-
 perform KDE on the central region
+
 ```{r}
 # Convert to sf object
 
@@ -157,6 +166,7 @@ biz47_ppp  <- as.ppp(st_coordinates(biz47_sf_in),  W = centralarea)
 biz551_ppp <- as.ppp(st_coordinates(biz551_sf_in), W = centralarea)
 biz932_ppp <- as.ppp(st_coordinates(biz932_sf_in), W = centralarea)
 ```
+
 ### Kernel density across Singapore for all businesses
 
 ```{r}
@@ -224,7 +234,9 @@ kde_biz932 <- density(
 )
 plot(kde_biz932, main = "KDE - Amusement & Recreation (932)")
 ```
+
 ## Spatio Temporal KDE by months
+
 We check how many businesses were opened each month and their locaitons.
 
 ### Retail Trade (47)
@@ -258,10 +270,12 @@ summary(biz47_month_central)
 # 5) Plot
 plot(biz47_month_central)
 ```
+
 ```{r}
 biz47_stkde <- spattemp.density(biz47_month_central)
 summary(biz47_stkde)
 ```
+
 ```{r}
 # 6) Plot all months sequentially, full size, with proper YYYY-MM labels
 #    Build a lookup from index -> label
@@ -280,7 +294,6 @@ for (i in idx_levels) {
 
 
 ```
-
 
 ### Short-Term Accomodation (551)
 
@@ -306,12 +319,13 @@ biz551_month_central <- biz551_month_ppp[central_owin]
 summary(biz551_month_central)
 # 5) Plot
 plot(biz551_month_central)
-``` 
+```
 
 ```{r}
 biz551_stkde <- spattemp.density(biz551_month_central)
 summary(biz551_stkde)
 ```
+
 ```{r}
 # 6) Plot all months sequentially, full size, with proper YYYY-MM labels
 #    Build a lookup from index -> label
@@ -328,7 +342,9 @@ for (i in idx_levels) {
        main = paste("ST-KDE – biz551 (", lab_lookup$YearMonthLab[lab_lookup$Month_idx == i], ")", sep = ""))
 }
 ```
+
 ### Amusement & Recreation (932)
+
 ```{r}
 # 1) Build ordered month index (numeric) + nice label
 biz932_sf_in <- biz932_sf_in %>%
@@ -364,6 +380,7 @@ biz932_stkde <- spattemp.density(biz932_month_central)
 # Summarise results
 summary(biz932_stkde)
 ```
+
 ```{r}
 # 6) Plot all months sequentially, full size, with proper YYYY-MM labels
 #    Build a lookup from index -> label
@@ -382,11 +399,62 @@ for (i in idx_levels) {
                     ")", sep = ""))
 }
 ```
+
 From the spatio-temporal KDE plots, we can observe the following trends for each business category over time:\
-1. **Retail Trade (47)**: The density of retail trade businesses appears to increase steadily over time, with notable concentrations in areas such as Orchard and Marina Bay. This suggests a growing demand for retail services in these popular shopping districts.
-2. **Accommodation (551)**: The density of accommodation businesses shows a more fluctuating pattern, with peaks during certain months. This could be indicative of seasonal tourism trends, where certain times of the year see higher demand for accommodation services, particularly in areas like Marina Bay and Bugis.
-3. **Amusement & Recreation (932)**: The density of amusement and recreation businesses also shows variability over time, with certain months exhibiting higher concentrations. This may reflect the opening of new attractions or seasonal events that draw visitors to specific areas.
-Overall, the spatio-temporal KDE analysis provides valuable insights into the dynamics of business activities in Singapore, highlighting areas of growth and seasonal trends that can inform business strategies and urban planning efforts.
+1. **Retail Trade (47)**: The density of retail trade businesses appears to increase steadily over time, with notable concentrations in areas such as Orchard and Marina Bay. This suggests a growing demand for retail services in these popular shopping districts. 2. **Accommodation (551)**: The density of accommodation businesses shows a more fluctuating pattern, with peaks during certain months. This could be indicative of seasonal tourism trends, where certain times of the year see higher demand for accommodation services, particularly in areas like Marina Bay and Bugis. 3. **Amusement & Recreation (932)**: The density of amusement and recreation businesses also shows variability over time, with certain months exhibiting higher concentrations. This may reflect the opening of new attractions or seasonal events that draw visitors to specific areas. Overall, the spatio-temporal KDE analysis provides valuable insights into the dynamics of business activities in Singapore, highlighting areas of growth and seasonal trends that can inform business strategies and urban planning efforts.
 
 ## 2nd order spatial Analysis
 
+Using F function for retail businesses (47)
+
+```{r}
+F_biz47 = Fest(biz47_ppp)
+plot(F_biz47, main = "F function - Retail Trade (47)")
+```
+
+Performing Complete Spatial Randomness Test
+
+To confirm the observed spatial patterns above, a hypothesis test will be conducted. The hypothesis and test are as follows:
+
+Ho = The distribution of retail shops in CBD are randomly distributed.
+
+H1= The distribution of retail shops in CBD are not randomly distributed.
+
+The null hypothesis will be rejected if p-value is smaller than alpha value of 0.001.
+
+```{r}
+envelope_F_biz47 = envelope(biz47_ppp, Fest, nsim=99)
+```
+
+```{r}
+plot(envelope_F_biz47, main = "F function - Retail Trade (47) with CSR envelope")
+```
+
+### Using K function for Short term Accomodations (551)
+We chose K funcion so that we can see how closely packed the short term accommodations are in the CBD area.
+
+```{r}
+K_biz551 = Kest(biz551_ppp, correction = "Ripley")
+plot(K_biz551, . -r ~ r, ylab= "K(d)-r", xlab = "d(m)")
+```
+This indicates clustering 
+
+
+### Performing Complete Spatial Randomness Test
+To confirm the observed spatial patterns above, a hypothesis test will be conducted. The hypotheses are as follows:
+
+H₀: The distribution of short-term accommodations in the CBD is randomly distributed (follows CSR).
+
+H₁: The distribution of short-term accommodations in the CBD is not randomly distributed (deviates from CSR).
+
+The null hypothesis will be rejected if the p-value is smaller than the alpha value of 0.001.
+
+```{r}
+envelope_K_biz551 <- envelope(biz551_ppp, Kest, nsim=99, rank = 1, glocal=TRUE)
+```
+
+```{r}
+
+plot(envelope_K_biz551, main = "K function - Short Term Accomodation (551) with CSR envelope")
+
+```
