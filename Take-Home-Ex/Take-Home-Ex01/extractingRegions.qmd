@@ -2,66 +2,391 @@
 title: "extractingRegions"
 format: html
 ---
+
+```{r}
+pacman::p_load(tidyverse, sf, tmap, httr, spatstat, rvest, sparr, stpp)
+```
+
+```{r}
+biz47 <- readRDS("data/rds/biz_47.rds")
+biz551 <- readRDS("data/rds/biz_551.rds")
+biz932 <- readRDS("data/rds/biz_932.rds")
+```
+
+Convert tibble to sf
+
+```{r}
+
+biz47_sf <- st_as_sf(biz47,
+                     coords = c("X", "Y"),
+                     crs = 3414)
+
+biz551_sf <- st_as_sf(biz551,
+                      coords = c("X", "Y"),
+                      crs = 3414)
+
+biz932_sf <- st_as_sf(biz932,
+                      coords = c("X", "Y"),
+                      crs = 3414)
+```
+
 Extract regions from mpsz
 
-{r}
-extract_kml_field <- function(html_text, field_name) {
-  if (is.na(html_text) || html_text == "") return(NA_character_)
+```{r} 
+extract_kml_field <- function(html_text, field_name) { 
+  if (is.na(html_text) || html_text == "") 
+    return(NA_character_)
   
-  page <- read_html(html_text)
+  page <- read_html(html_text) 
   rows <- page %>% html_elements("tr")
   
-  value <- rows %>%
-    keep(~ html_text2(html_element(.x, "th")) == field_name) %>%
-    html_element("td") %>%
+  value <- rows %>% 
+    keep(~ html_text2(html_element(.x, "th")) == field_name) %>% 
+    html_element("td") %>% 
     html_text2()
   
-  if (length(value) == 0) NA_character_ else value
+  if (length(value) == 0) NA_character_ else value 
 }
+```
 
-{r}
+
+```{r}
+mpsz_sf <- st_read("data/rawdata/MasterPlan2019SubzoneBoundaryNoSeaKML.kml") %>% 
+  st_zm(drop = TRUE, what = "ZM") %>% st_transform(crs = 3414)
+```
+
+
+```{r} 
 mpsz_sf <- mpsz_sf %>%
   mutate(
-    REGION_N = map_chr(Description, extract_kml_field, "REGION_N"),
+    REGION_N   = map_chr(Description, extract_kml_field, "REGION_N"),
     PLN_AREA_N = map_chr(Description, extract_kml_field, "PLN_AREA_N"),
-    SUBZONE_N = map_chr(Description, extract_kml_field, "SUBZONE_N"),
-    SUBZONE_C = map_chr(Description, extract_kml_field, "SUBZONE_C")
+    SUBZONE_N  = map_chr(Description, extract_kml_field, "SUBZONE_N"),
+    SUBZONE_C  = map_chr(Description, extract_kml_field, "SUBZONE_C")
   ) %>%
   select(-Name, -Description) %>%
   relocate(geometry, .after = last_col())
+```
 
-remove islands
+We parse out REGION, PLANNING AREA, and SUBZONE attributes.
 
-{r}
+```{r} 
+# remove islands
 mpsz_cl <- mpsz_sf %>%
-  filter(SUBZONE_N != "SOUTHERN GROUP",
-         PLN_AREA_N != "WESTERN ISLANDS",
-         PLN_AREA_N != "NORTH-EASTERN ISLANDS")
+  filter(
+    SUBZONE_N != "SOUTHERN GROUP",
+    PLN_AREA_N != "WESTERN ISLANDS",
+    PLN_AREA_N != "NORTH-EASTERN ISLANDS"
+  )
+```
+Save cleaned dataset
 
-{r}
-write_rds(mpsz_cl, 
-          "data/rds/mpsz_cl.rds")
+Write the filtered shapefile to RDS for later use.
+```{r}
+write_rds(mpsz_cl, "data/rds/mpsz_cl.rds")
+```
 
-{r}
+Visualization
+Retail Trade (47)
+```{r}
+# --- Retail Trade (47) --- 
+tm_shape(mpsz_cl) + tm_polygons() + tm_shape(biz47_sf) + tm_dots(col = "red")
+```
+Accommodation (551)
+```{r}
+# --- Accommodation (551) --- 
+tm_shape(mpsz_cl) + tm_polygons() + tm_shape(biz551_sf) + tm_dots(col = "blue")
+```
+Amusement & Recreation (932)
+```{r}
+# --- Amusement & Recreation (932) --- 
+tm_shape(mpsz_cl) + tm_polygons() + tm_shape(biz932_sf) + tm_dots(col = "green")
+```
+Since majority of the points are concentrated in the Central Region, we can zoom into that area for better visualization.
+
+```{r}
+# Zoom into Central Region
+# filter central region
+centralarea <- mpsz_cl %>%
+  filter(REGION_N == "CENTRAL REGION")
+
+# make sure CRS matches
+biz47_sf <- st_transform(biz47_sf, st_crs(centralarea))
+```
+
+Retail Trade (47)
+```{r}
 # --- Retail Trade (47) ---
-tm_shape(mpsz_sf) +
-  tm_polygons() +
-tm_shape(biz47_sf) +
-  tm_dots(col = "red")
 
-{r}
+biz47_sf_in <- st_intersection(biz47_sf, centralarea)
+tm_shape(centralarea) + tm_polygons() + tm_shape(biz47_sf_in) + tm_dots(col = "red")
+```
+
+Accommodation (551)
+```{r}
 # --- Accommodation (551) ---
-tm_shape(mpsz_sf) +
-  tm_polygons() +
-tm_shape(biz551_sf) +
-  tm_dots(col = "blue")
 
-{r}
+# make sure CRS matches
+biz551_sf <- st_transform(biz551_sf, st_crs(centralarea))
+
+biz551_sf_in <- st_intersection(biz551_sf, centralarea)
+tm_shape(centralarea) + tm_polygons() + tm_shape(biz551_sf_in) + tm_dots(col = "blue")
+```
+Amusement & Recreation (932)
+```{r}
 # --- Amusement & Recreation (932) ---
-tm_shape(mpsz_sf) +
-  tm_polygons() +
-tm_shape(biz932_sf) +
-  tm_dots(col = "green")
+
+# make sure CRS matches
+biz932_sf <- st_transform(biz932_sf, st_crs(centralarea))
+
+biz932_sf_in <- st_intersection(biz932_sf, centralarea)
+
+tm_shape(centralarea) + tm_polygons() + tm_shape(biz932_sf_in) + tm_dots(col = "green")
+```
+
+From the visualizations, we can see that the points are concentrated in the Central Region, particularly in areas such as Orchard, Marina Bay, and Bugis. This indicates that these areas are popular for retail trade, accommodation, and amusement & recreation activities. The spatial distribution of these business activities can provide insights into consumer behavior and preferences in Singapore.
 
 
+perform KDE on the central region
+```{r}
+# Convert to sf object
+
+centralarea <- as.owin(centralarea)
+
+biz47_ppp  <- as.ppp(st_coordinates(biz47_sf_in),  W = centralarea)
+biz551_ppp <- as.ppp(st_coordinates(biz551_sf_in), W = centralarea)
+biz932_ppp <- as.ppp(st_coordinates(biz932_sf_in), W = centralarea)
+```
+### Kernel density across Singapore for all businesses
+
+```{r}
+# --- biz47 ---
+bw_diggle_47 <- bw.diggle(biz47_ppp)
+kde_biz47 <- density(
+  biz47_ppp,
+  sigma = bw_diggle_47,
+  edge = TRUE,
+  kernel = "gaussian"
+)
+
+# --- biz551 ---
+bw_diggle_551 <- bw.diggle(biz551_ppp)
+kde_biz551 <- density(
+  biz551_ppp,
+  sigma = bw_diggle_551,
+  edge = TRUE,
+  kernel = "gaussian"
+)
+
+# --- biz932 ---
+bw_diggle_932 <- bw.diggle(biz932_ppp)
+kde_biz932 <- density(
+  biz932_ppp,
+  sigma = bw_diggle_932,
+  edge = TRUE,
+  kernel = "gaussian"
+)
+
+```
+
+### KDE for Retail (47)
+
+```{r}
+kde_biz47 <- density(
+  biz47_ppp,
+  sigma=1000, 
+  edge=TRUE,
+  kernel="gaussian"
+)
+plot(kde_biz47)
+```
+
+### KDE for Accommodation (551)
+
+```{r}
+kde_biz551 <- density(
+  biz551_ppp,
+  sigma = 1000, 
+  edge = TRUE,
+  kernel = "gaussian"
+)
+plot(kde_biz551, main = "KDE - Accommodation (551)")
+```
+
+### KDE - Amusement & Recreation (932)
+
+```{r}
+kde_biz932 <- density(
+  biz932_ppp,
+  sigma = 1000, 
+  edge = TRUE,
+  kernel = "gaussian"
+)
+plot(kde_biz932, main = "KDE - Amusement & Recreation (932)")
+```
+## Spatio Temporal KDE by months
+We check how many businesses were opened each month and their locaitons.
+
+### Retail Trade (47)
+
+```{r}
+
+
+# 1) Build ordered month index (numeric) + nice label
+biz47_sf_in <- biz47_sf_in %>%
+  mutate(
+    YearMonthDate = floor_date(uen_issue_date, "month"),
+    YearMonthLab  = format(YearMonthDate, "%Y-%m"),
+    Month_idx     = as.integer(factor(YearMonthDate,
+                                      levels = sort(unique(YearMonthDate))))
+  )
+
+# 2) Keep only Month_idx + geometry
+biz47_month <- biz47_sf_in %>%
+  select(Month_idx)
+
+# 3) Convert to ppp
+biz47_month_ppp <- as.ppp(biz47_month)
+summary(biz47_month_ppp)
+any(duplicated(biz47_month_ppp))
+
+# 4) Clip to Central Region only
+central_owin <- as.owin(centralarea)
+biz47_month_central <- biz47_month_ppp[central_owin]
+summary(biz47_month_central)
+
+# 5) Plot
+plot(biz47_month_central)
+```
+```{r}
+biz47_stkde <- spattemp.density(biz47_month_central)
+summary(biz47_stkde)
+```
+```{r}
+# 6) Plot all months sequentially, full size, with proper YYYY-MM labels
+#    Build a lookup from index -> label
+idx_levels <- sort(unique(biz47_sf_in$Month_idx))
+lab_lookup <- biz47_sf_in %>%
+  distinct(Month_idx, YearMonthLab) %>%
+  arrange(Month_idx)
+
+
+for (i in idx_levels) {
+  plot(biz47_stkde, i,
+       override.par = FALSE,
+       fix.range    = TRUE,
+       main = paste("ST-KDE – biz47 (", lab_lookup$YearMonthLab[lab_lookup$Month_idx == i], ")", sep = ""))
+}
+
+
+```
+
+
+### Short-Term Accomodation (551)
+
+```{r}
+# 1) Build ordered month index (numeric) + nice label
+biz551_sf_in <- biz551_sf_in %>%
+  mutate(
+    YearMonthDate = floor_date(uen_issue_date, "month"),
+    YearMonthLab  = format(YearMonthDate, "%Y-%m"),
+    Month_idx     = as.integer(factor(YearMonthDate,
+                                      levels = sort(unique(YearMonthDate))))
+  )
+# 2) Keep only Month_idx + geometry
+biz551_month <- biz551_sf_in %>%
+  select(Month_idx)
+# 3) Convert to ppp
+biz551_month_ppp <- as.ppp(biz551_month)
+summary(biz551_month_ppp)
+any(duplicated(biz551_month_ppp))
+# 4) Clip to Central Region only
+central_owin <- as.owin(centralarea)
+biz551_month_central <- biz551_month_ppp[central_owin]
+summary(biz551_month_central)
+# 5) Plot
+plot(biz551_month_central)
+``` 
+
+```{r}
+biz551_stkde <- spattemp.density(biz551_month_central)
+summary(biz551_stkde)
+```
+```{r}
+# 6) Plot all months sequentially, full size, with proper YYYY-MM labels
+#    Build a lookup from index -> label
+  
+idx_levels <- sort(unique(biz551_sf_in$Month_idx))
+lab_lookup <- biz551_sf_in %>%
+  distinct(Month_idx, YearMonthLab) %>%
+  arrange(Month_idx)
+for (i in idx_levels) {
+    
+  plot(biz551_stkde, i,
+       override.par = FALSE,
+       fix.range    = TRUE,
+       main = paste("ST-KDE – biz551 (", lab_lookup$YearMonthLab[lab_lookup$Month_idx == i], ")", sep = ""))
+}
+```
+### Amusement & Recreation (932)
+```{r}
+# 1) Build ordered month index (numeric) + nice label
+biz932_sf_in <- biz932_sf_in %>%
+  mutate(
+    YearMonthDate = floor_date(uen_issue_date, "month"),
+    YearMonthLab  = format(YearMonthDate, "%Y-%m"),
+    Month_idx     = as.integer(factor(YearMonthDate,
+                                      levels = sort(unique(YearMonthDate))))
+  )
+
+# 2) Keep only Month_idx + geometry
+biz932_month <- biz932_sf_in %>%
+  select(Month_idx)
+
+# 3) Convert to ppp
+biz932_month_ppp <- as.ppp(biz932_month)
+summary(biz932_month_ppp)
+any(duplicated(biz932_month_ppp))
+
+# 4) Clip to Central Region only
+central_owin <- as.owin(centralarea)
+biz932_month_central <- biz932_month_ppp[central_owin]
+summary(biz932_month_central)
+
+# 5) Plot
+plot(biz932_month_central)
+```
+
+```{r}
+# Spatio-temporal KDE for attractions
+biz932_stkde <- spattemp.density(biz932_month_central)
+
+# Summarise results
+summary(biz932_stkde)
+```
+```{r}
+# 6) Plot all months sequentially, full size, with proper YYYY-MM labels
+#    Build a lookup from index -> label
+
+idx_levels <- sort(unique(biz932_sf_in$Month_idx))
+lab_lookup <- biz932_sf_in %>%
+  distinct(Month_idx, YearMonthLab) %>%
+  arrange(Month_idx)
+
+for (i in idx_levels) {
+  plot(biz932_stkde, i,
+       override.par = FALSE,
+       fix.range    = TRUE,
+       main = paste("ST-KDE – biz932 (", 
+                    lab_lookup$YearMonthLab[lab_lookup$Month_idx == i], 
+                    ")", sep = ""))
+}
+```
+From the spatio-temporal KDE plots, we can observe the following trends for each business category over time:\
+1. **Retail Trade (47)**: The density of retail trade businesses appears to increase steadily over time, with notable concentrations in areas such as Orchard and Marina Bay. This suggests a growing demand for retail services in these popular shopping districts.
+2. **Accommodation (551)**: The density of accommodation businesses shows a more fluctuating pattern, with peaks during certain months. This could be indicative of seasonal tourism trends, where certain times of the year see higher demand for accommodation services, particularly in areas like Marina Bay and Bugis.
+3. **Amusement & Recreation (932)**: The density of amusement and recreation businesses also shows variability over time, with certain months exhibiting higher concentrations. This may reflect the opening of new attractions or seasonal events that draw visitors to specific areas.
+Overall, the spatio-temporal KDE analysis provides valuable insights into the dynamics of business activities in Singapore, highlighting areas of growth and seasonal trends that can inform business strategies and urban planning efforts.
+
+## 2nd order spatial Analysis
 

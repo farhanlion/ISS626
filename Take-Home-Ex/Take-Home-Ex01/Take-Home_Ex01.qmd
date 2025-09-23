@@ -34,7 +34,7 @@ pacman::p_load(tidyverse, sf, tmap, httr, spatstat, rvest, sparr, stpp)
 
 ### import data and remove problematic data
 
-```{r}
+```{r, eval=FALSE}
 folder_path <- "data/aspatial/acra"
 file_list <- list.files(path = folder_path, 
                         pattern = "^ACRA*.*\\.csv$", 
@@ -48,7 +48,7 @@ acra_data <- file_list %>%
 
 save the consolidated ACRA data
 
-```{r}
+```{r, eval=FALSE}
 write_rds(acra_data,
           "data/rds/acra_data.rds")
 ```
@@ -57,7 +57,7 @@ write_rds(acra_data,
 
 pad problematc postal codes
 
-```{r}
+```{r, eval=FALSE}
 acra_data <- acra_data %>% mutate(
     postal_code = str_pad(postal_code, 
     width = 6, side = "left", pad = "0"))
@@ -65,7 +65,7 @@ acra_data <- acra_data %>% mutate(
 
 We will keep the first 25 columns and filter for businesses classified under SSIC codes **47 (Retail Trade)**, **551 (Short Term Accommodation Activities)**, and **932 (Other Amusement and Recreation Activities)**. Additionally, we will restrict the dataset to businesses registered between **1 January 2024** and **30 June 2025**.
 
-```{r}
+```{r, eval=FALSE}
 
 # Retail Trade (47)
 biz47 <- acra_data %>%
@@ -98,7 +98,7 @@ biz932 <- acra_data %>%
 
 ## Fetch all unique postal
 
-```{r}
+```{r, eval=FALSE}
 # 551 - Short Term Accommodation Activities
 postcodes_551 <- unique(biz551$postal_code)
 
@@ -112,7 +112,7 @@ postcodes_932 <- unique(biz932$postal_code)
 
 ## Geocoding
 
-```{r}
+```{r, eval=FALSE}
 library(httr)
 library(dplyr)
 
@@ -147,7 +147,7 @@ fetch_postcodes <- function(df, url) {
 
 ```
 
-```{r}
+```{r, eval=FALSE}
 url <- "https://onemap.gov.sg/api/common/elastic/search"
 
 res_47  <- fetch_postcodes(biz47, url)
@@ -158,7 +158,7 @@ res_932 <- fetch_postcodes(biz932, url)
 
 Fetch the first 10 columns including the lat and long
 
-```{r}
+```{r, eval=FALSE}
 res_47$found <- res_47$found %>% select(1:10)
 res_551$found <- res_551$found %>% select(1:10)
 res_932$found <- res_932$found %>% select(1:10)
@@ -166,7 +166,7 @@ res_932$found <- res_932$found %>% select(1:10)
 
 Appending the location information
 
-```{r}
+```{r, eval=FALSE}
 biz47 <- biz47 %>%
   left_join(res_47$found, 
             by = c("postal_code" = "POSTAL"))
@@ -183,7 +183,7 @@ biz932 <- biz932 %>%
 
 Save the data
 
-```{r}
+```{r, eval=FALSE}
 write_rds(biz47, "data/rds/biz_47.rds")
 write_rds(biz551, "data/rds/biz_551.rds")
 write_rds(biz932, "data/rds/biz_932.rds")
@@ -222,7 +222,7 @@ biz932_sf <- st_as_sf(biz932,
 tmap_mode("view")
 
 tm_shape(biz47_sf) +
-  tm_dots(col = "blue", size = 0.1) +data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAaCAYAAADFTB7LAAAAcElEQVR4Xu3OwQmAQAxE0bClWYCW5N06tM6V2YPg5CjoF/JhLoHAi6iqn9eOefUbqrYvHY0cQDLyAlKRNyARmYA0ZMLRkAlGQyaU72tkAtlim7r/vJqDUDjlKBROOQyFU2icQuMUGqfQuBEaV1XPOwEx96nYACK8+wAAAABJRU5ErkJggg==
+  tm_dots(col = "blue", size = 0.1) +
 tm_shape(biz551_sf) +
   tm_dots(col = "red", size = 0.1) +
 tm_shape(biz932_sf) +
@@ -363,9 +363,6 @@ plot(biz47_month_owin)
 # 5) Spatio-temporal KDE (auto bandwidths; or set h=..., lambda=...)
 biz47_stkde <- spattemp.density(biz47_month_owin)
 summary(biz47_stkde)
-
-
-
 ```
 
 ```{r}
@@ -481,7 +478,7 @@ G_biz47  = Gest(biz47_ppp, correction = "border")
 plot(G_biz47 , xlim=c(0,500))
 ```
 
-```{r}
+```{r, eval=FALSE}
 G_biz47_csr <- envelope(biz47_ppp, Gest, nsim = 999)
 
 plot(G_biz47_csr, 
@@ -544,7 +541,6 @@ plot(F_biz932, xlim = c(0, 500),
      xlab = "Distance r (m)", ylab = "F(r)")
 ```
 
-
 ```{r}
 F_biz932_env <- envelope(
   biz932_ppp,
@@ -554,7 +550,6 @@ F_biz932_env <- envelope(
 
 ```
 
-
 ```{r}
 plot(F_biz932_env,
      main = "Monte Carlo CSR test – F(r) for Amusement & Recreation (932)",
@@ -562,9 +557,5 @@ plot(F_biz932_env,
 ```
 
 ### Summary
-From the G-function analysis, we observe that retail businesses (SSIC code 47) exhibit clustering behavior, as indicated by the empirical G-function lying above the CSR envelope. This suggests that retail businesses tend to be located closer to each other than would be expected under a random distribution.
-In contrast, the accommodation businesses (SSIC code 551) show a more random spatial distribution, with the empirical G-function closely following the CSR envelope. This indicates that accommodation providers are more evenly spread out across the area, likely to cater to a wider range of locations for tourists.
-The F-function analysis for amusement and recreation businesses (SSIC code 932) reveals a tendency towards regularity, as the empirical F-function lies below the CSR envelope. This suggests that these businesses are more evenly spaced than would be expected under a random distribution, possibly to avoid direct competition and to cover different market segments.
-Overall, the spatial patterns of these business types reflect their differing operational strategies and market demands. Retail businesses cluster to attract foot traffic, accommodation providers distribute evenly to maximize accessibility, and amusement and recreation businesses space themselves out to minimize competition.
 
-
+From the G-function analysis, we observe that retail businesses (SSIC code 47) exhibit clustering behavior, as indicated by the empirical G-function lying above the CSR envelope. This suggests that retail businesses tend to be located closer to each other than would be expected under a random distribution. In contrast, the accommodation businesses (SSIC code 551) show a more random spatial distribution, with the empirical G-function closely following the CSR envelope. This indicates that accommodation providers are more evenly spread out across the area, likely to cater to a wider range of locations for tourists. The F-function analysis for amusement and recreation businesses (SSIC code 932) reveals a tendency towards regularity, as the empirical F-function lies below the CSR envelope. This suggests that these businesses are more evenly spaced than would be expected under a random distribution, possibly to avoid direct competition and to cover different market segments. Overall, the spatial patterns of these business types reflect their differing operational strategies and market demands. Retail businesses cluster to attract foot traffic, accommodation providers distribute evenly to maximize accessibility, and amusement and recreation businesses space themselves out to minimize competition.

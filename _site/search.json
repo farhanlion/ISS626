@@ -502,5 +502,19 @@
     "title": "In-class_Ex04",
     "section": "Geographically Weighted Summary Statistics with adaptive bandwidth",
     "text": "Geographically Weighted Summary Statistics with adaptive bandwidth"
+  },
+  {
+    "objectID": "Take-Home-Ex/Take-Home-Ex01/untitled.html",
+    "href": "Take-Home-Ex/Take-Home-Ex01/untitled.html",
+    "title": "untitled",
+    "section": "",
+    "text": "1+6\n\n[1] 7\n\n\n\n#asdasdasdasd"
+  },
+  {
+    "objectID": "Take-Home-Ex/Take-Home-Ex01/extractingRegions.html",
+    "href": "Take-Home-Ex/Take-Home-Ex01/extractingRegions.html",
+    "title": "extractingRegions",
+    "section": "",
+    "text": "Extract regions from mpsz\n{r} extract_kml_field &lt;- function(html_text, field_name) { if (is.na(html_text) || html_text == ““) return(NA_character_)\npage &lt;- read_html(html_text) rows &lt;- page %&gt;% html_elements(“tr”)\nvalue &lt;- rows %&gt;% keep(~ html_text2(html_element(.x, “th”)) == field_name) %&gt;% html_element(“td”) %&gt;% html_text2()\nif (length(value) == 0) NA_character_ else value }\n{r} mpsz_sf &lt;- mpsz_sf %&gt;% mutate( REGION_N = map_chr(Description, extract_kml_field, “REGION_N”), PLN_AREA_N = map_chr(Description, extract_kml_field, “PLN_AREA_N”), SUBZONE_N = map_chr(Description, extract_kml_field, “SUBZONE_N”), SUBZONE_C = map_chr(Description, extract_kml_field, “SUBZONE_C”) ) %&gt;% select(-Name, -Description) %&gt;% relocate(geometry, .after = last_col())\nremove islands\n{r} mpsz_cl &lt;- mpsz_sf %&gt;% filter(SUBZONE_N != “SOUTHERN GROUP”, PLN_AREA_N != “WESTERN ISLANDS”, PLN_AREA_N != “NORTH-EASTERN ISLANDS”)\n{r} write_rds(mpsz_cl, “data/rds/mpsz_cl.rds”)\n{r} # — Retail Trade (47) — tm_shape(mpsz_sf) + tm_polygons() + tm_shape(biz47_sf) + tm_dots(col = “red”)\n{r} # — Accommodation (551) — tm_shape(mpsz_sf) + tm_polygons() + tm_shape(biz551_sf) + tm_dots(col = “blue”)\n{r} # — Amusement & Recreation (932) — tm_shape(mpsz_sf) + tm_polygons() + tm_shape(biz932_sf) + tm_dots(col = “green”)"
   }
 ]
