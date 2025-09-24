@@ -1,5 +1,5 @@
 ---
-title: "Take-Home_Ex01"
+title: "Take Home Excercise 1"
 author: "Mohammad Farhan Ahsan"
 date: "September 20, 2025"
 date-modified: "last-modified"
@@ -692,7 +692,7 @@ New attraction business activity registration was very strong in the first month
 
 The **F function** is applied to retail businesses (47) to analyze spatial accessibility. It measures the distribution of distances from randomly chosen points within the study area (central region) to the nearest retail business. By using the F function, we can evaluate how accessible retail businesses are across the spatial plane.
 
-```{r, eval=FALSE}
+```{r}
 F_biz47 = Fest(biz47_ppp)
 plot(F_biz47, main = "F function - Retail Trade (47)")
 ```
@@ -721,11 +721,11 @@ H1= The distribution of retail shops in CBD are not randomly distributed.
 
 The null hypothesis will be rejected if p-value is smaller than alpha value of 0.001.
 
-```{r, eval=FALSE}
+```{r}
 envelope_F_biz47 = envelope(biz47_ppp, Fest, nsim=99)
 ```
 
-```{r, eval=FALSE}
+```{r}
 plot(envelope_F_biz47, main = "F function - Retail Trade (47) with CSR envelope")
 ```
 
@@ -735,7 +735,7 @@ The grey band represents the CSR envelope, while the black line shows the observ
 
 The **K function** is applied to short-term accommodations in the CBD to examine their spatial arrangement. By using this function, we can assess how closely these establishments are packed together and determine whether they exhibit clustering, randomness, or dispersion across the study area.
 
-```{r, eval=FALSE}
+```{r}
 K_biz551 = Kest(biz551_ppp, correction = "Ripley")
 plot(K_biz551, . -r ~ r, ylab= "K(d)-r", xlab = "d(m)")
 ```
@@ -752,11 +752,11 @@ H₁: The distribution of short-term accommodations in the CBD is not randomly d
 
 The null hypothesis will be rejected if the p-value is smaller than the alpha value of 0.001.
 
-```{r, eval=FALSE}
+```{r}
 envelope_K_biz551 <- envelope(biz551_ppp, Kest, nsim=99, rank = 1, glocal=TRUE)
 ```
 
-```{r, eval=FALSE}
+```{r include = TRUE, eval = FALSE}
 
 plot(envelope_K_biz551, main = "K function - Short Term Accomodation (551) with CSR envelope")
 
@@ -768,7 +768,7 @@ The K function with CSR envelope for short-term accommodations (551) shows that 
 
 The **L function**, a variance-stabilized transformation of Ripley’s K function, is applied to amusement and recreation businesses in the CBD. We use this function to examine how closely packed these establishments are at different spatial scales. In the plot, the **x-axis (d)** represents distance in meters, while the **y-axis (L(d) – r)** shows deviations from complete spatial randomness (CSR). If the observed line lies **above zero**, it suggests clustering; if it lies **below zero**, it suggests dispersion or regular spacing; and values close to zero indicate a random distribution. This transformation makes deviations from CSR easier to detect and interpret compared to the raw K function.
 
-```{r, eval=FALSE}
+```{r include = TRUE, eval = FALSE}
 L_biz932 = Lest(biz932_ppp, correction = "Ripley")
 plot(L_biz932, . -r ~ r, ylab= "L(d)-r", xlab = "d(m)")
 ```
@@ -787,11 +787,11 @@ H₁: The distribution of attractions in the central area is not randomly distri
 
 The null hypothesis will be rejected if the p-value is smaller than the alpha value of 0.001.
 
-```{r, eval=FALSE}
+```{r}
 envelope_L_biz932 <- envelope(biz932_ppp, Lest, nsim=99, rank = 1, glocal=TRUE)
 ```
 
-```{r, eval=FALSE}
+```{r}
 plot(envelope_L_biz932, main = "L function - Amusement & Recreation (932) with CSR envelope")
 ```
 
