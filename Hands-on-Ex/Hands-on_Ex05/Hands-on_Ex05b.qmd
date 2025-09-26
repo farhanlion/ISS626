@@ -533,3 +533,5 @@ HCSA_map
 ```{r}
 tmap_arrange(Gi_star_map, HCSA_map, asp=1, ncol=2)
 ```
+
+The LISA maps show clear spatial clustering of GDP per capita. The Local Gi\* results highlight hot spots in the east-central region and cold spots in the west and south, indicating uneven economic development. The HCSA clusters confirm these patterns with statistical significance (p \< 0.05), showing that the eastern clusters of high GDPPC and western clusters of low GDPPC are not random but represent meaningful regional disparities.
