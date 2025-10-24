@@ -1,0 +1,1937 @@
+---
+title: "Take Home Excercise 2"
+author: "Mohammad Farhan Ahsan"
+date: "20/10/25"
+date-modified: "last-modified"
+format: html
+execute: 
+  echo: true
+  eval: true
+  warning: false
+  freeze: true
+  cache: false
+---
+
+## 1. Datasets
+
+### **Aspatial data**
+
+For the purpose of this take-home exercise, the latest month *Passenger Volume by Origin Destination Bus Stops* downloaded from [LTA DataMall](https://datamall.lta.gov.sg/content/datamall/en.html) will be used.
+
+### **Geospatial data**
+
+Two geospatial data will be used in this study, they are:
+
+-   *Bus Stop Location* from LTA DataMall. It provides information about all the bus stops currently being serviced by buses, including the bus stop code (identifier) and location coordinates.
+
+-   *Master Plan 2019 Subzone Boundary (No Sea)* from [Singapore’s open data portal](https://isss626-ay2025-26aug.netlify.app/data.gov.sg).
+
+## 2. Load Packages
+
+```{r}
+pacman::p_load(tidyverse, sf, sfdep, tmap, knitr, kableExtra, DT, spdep, Kendall, zoo, spacetime)
+```
+
+## 3. Importing Data
+
+```{r}
+BusStop = st_read(dsn = "data/LTADataMall/", 
+                  layer = "BusStop") %>%
+  st_transform(crs = 3414)
+```
+
+```{r}
+mpsz = read_rds("data/rds/mpsz_sf.rds")
+```
+
+```{r}
+odbus <- read_csv("data/LTADataMall/origin_destination_bus_202509.csv")
+```
+
+## 4. Data Cleaning
+
+### **4.1 Extracting Bus Stops located within Singapore**
+
+```{r}
+BusStop_in_SG <- st_join(
+  BusStop, mpsz, 
+  join = st_within, 
+  left = FALSE)
+```
+
+```{r}
+# plot busstop and masterplan boundary
+tm_shape(mpsz) + 
+  tm_polygons() +
+tm_shape(BusStop) +
+  tm_dots()
+```
+
+### **4.2 Deriving Analytical Hexagon**
+
+```{r}
+hexagon <- st_make_grid(mpsz, 
+                        cellsize = 700,
+                        what = "polygon",
+                        square = FALSE) %>%
+  st_sf()
+```
+
+### 4.3 Checking the hexagon layer visually
+
+```{r}
+tm_shape(hexagon) +
+  tm_fill(col = "white", title = "Hexagons") +
+  tm_borders(alpha = 0.5) +
+  tm_layout(main.title = "Analytical hexagon layer overplot on Singapore",
+            main.title.position = "center",
+            main.title.size = 1.0,
+            legend.height = 0.35, 
+            legend.width = 0.35,
+            frame = TRUE) +
+  tm_compass(type="8star", size = 2, bg.color = "white", bg.alpha = 0.5) +
+  tm_scale_bar(bg.color = "white", bg.alpha = 0.5) +
+  tm_shape(mpsz) +
+  tm_fill("green", title = "Singapore Boundary", alpha = 0.5) +
+  tm_shape(BusStop_in_SG) +
+  tm_dots(col = "red", size = 0.005, title = "Bus Stops")
+```
+
+## 4.4 Selecting hexagons with bus stops
+
+```{r}
+hexagon$busstop_count =
+  lengths(st_intersects(
+    hexagon, BusStop_in_SG))
+
+hexagon <- filter(
+  hexagon, busstop_count > 0)
+```
+
+### **4.5 Selecting hexagons with bus stops**
+
+```{r}
+tm_shape(mpsz) +
+  tm_fill("green", title = "Singapore Boundary", alpha = 0.5) +
+  tm_shape(hexagon) +
+  tm_fill(col = "white", title = "Hexagons", alpha = 1) +
+  tm_borders(alpha = 0.2) +
+  tm_layout(main.title = "Analytical hexagon layer overplot on Singapore",
+            main.title.position = "center",
+            main.title.size = 1.0,
+            legend.height = 0.35, 
+            legend.width = 0.35,
+            frame = TRUE) +
+  tm_compass(type="8star", size = 2, bg.color = "white", bg.alpha = 0.5) +
+  tm_scale_bar(bg.color = "white", bg.alpha = 0.5) +
+  tm_shape(BusStop_in_SG) +
+  tm_dots(col = "red", size = 0.001, title = "Bus Stops") +
+  tm_grid(alpha = 0.2)
+```
+
+### Assigning ids to each hexagon
+
+the data frame does not include an ID field.
+
+#### The solution
+
+```{r}
+kable(head(hexagon)) %>%
+  kable_styling(font_size = 24)
+```
+
+```{r}
+hexagon <- hexagon %>% 
+  select(, -busstop_count)
+
+hexagon$HEX_ID <- sprintf(
+  "H%04d", seq_len(
+    nrow(hexagon))) %>% 
+  as.factor()
+```
+
+```{r}
+kable(head(hexagon)) %>%
+  kable_styling(font_size = 24)
+```
+
+### 4.6 Preparing Trip Generation Data
+
+### 4.6.1 Cleaning the data
+
+```{r}
+trips <- odbus %>%
+  select(c(ORIGIN_PT_CODE, DAY_TYPE, TIME_PER_HOUR, TOTAL_TRIPS)) %>%
+  rename(BUS_STOP_N = ORIGIN_PT_CODE) %>%
+  rename(HOUR_OF_DAY = TIME_PER_HOUR) %>%
+  rename(TRIPS = TOTAL_TRIPS)
+trips$BUS_STOP_N <- as.factor(trips$BUS_STOP_N)
+```
+
+```{r}
+kable(head(trips))
+```
+
+### 4.6.2 Populating Hexagon IDs into BusStop data frame
+
+```{r}
+bs_hex <- st_intersection(
+  BusStop, hexagon) %>%
+  st_drop_geometry() %>%
+  select(c(BUS_STOP_N, HEX_ID))
+```
+
+### 4.6.3 The bs_hex data frame
+
+```{r}
+kable(head(bs_hex))
+```
+
+### 4.6.4 Adding HEX_ID into bus trips data
+
+```{r}
+trips <- inner_join(trips, bs_hex)
+```
+
+```{r}
+kable(head(trips))
+```
+
+### 4.6.5 Aggregating TRIPS based on HEX_ID
+
+```{r}
+trips <- trips %>%
+  group_by(
+    HEX_ID,
+    DAY_TYPE,
+    HOUR_OF_DAY) %>%
+  summarise(TRIPS = sum(TRIPS))
+```
+
+#### The trips data frame
+
+```{r}
+
+htmltools::div(
+  style = "font-size: 18px;
+  width: 80%;
+  margin: auto;",
+  DT::datatable(
+    trips,
+    options = list(
+      pageLength = 10,
+      scrollY = 500,
+      scrollX = TRUE
+    )
+  )
+)
+```
+
+## 5. Geovisualisation
+
+### 5.1 Bus Stop Density
+
+Before analysing passenger flow, it’s useful to examine how bus stops are spatially distributed across Singapore. The map below displays the number of bus stops contained within each 375 m hexagonal cell. Areas with darker shades represent higher bus stop densities, often corresponding to transport hubs or densely built-up districts such as the Central Business District and town centres.
+
+```{r}
+# bus stops per hexagon
+hexagon$busstop_count <- lengths(st_intersects(hexagon, BusStop_in_SG))
+
+tm_shape(mpsz) + 
+  tm_fill("grey90") +
+tm_shape(hexagon) +
+  tm_fill(col = "busstop_count",
+          style = "equal", n = 5,
+          palette = "Blues",
+          title = "Bus stops per hex") +
+  tm_borders(alpha = 0.3) +
+  tm_layout(main.title = "Bus-stop density by hexagon",
+            legend.height = 0.35, legend.width = 0.35,
+            frame = TRUE) +
+  tm_compass(type="8star", size=2, bg.color="white", bg.alpha=0.5) +
+  tm_scale_bar(bg.color="white", bg.alpha=0.5)
+
+
+```
+
+This map illustrates the distribution of bus stops across Singapore, grouped into 375 m hexagonal grids.
+
+-   **High-density clusters** (dark blue) are mainly in the **north and east**, such as Ang Mo Kio, Tampines, and Pasir Ris — areas with dense housing and strong bus networks.\
+-   **Moderate density** occurs in the **central region**, reflecting mixed land uses and good MRT accessibility.\
+-   **Low-density zones** (light hexagons) dominate the **west and south**, including Tuas, Bukit Timah, and nature reserves.
+
+Overall, bus-stop density aligns closely with **population concentration and land use**, forming a strong base for analysing mobility and spatial clustering patterns.
+
+### 5.3 Spatial Distribution of Total Origin Trips
+
+The next section aggregates total bus trips by hexagonal zones and visualizes their distribution across Singapore. It first joins the trip dataset with each hexagon ID, groups all records by hexagon, and sums the number of trips to calculate total passenger volumes per zone. These aggregated values are then merged with the hexagon geometry for mapping. The `tmap` section creates a choropleth map using shades of red—darker tones indicate higher passenger activity—overlaid on the Singapore Master Plan Subzone layer, complete with borders, compass, scale bar, and legend for spatial reference.
+
+```{r}
+# Sum trips by hexagon across all hours/day types
+hex_trips_total <- trips %>%
+  inner_join(bs_hex, by = "HEX_ID") %>%
+  group_by(HEX_ID) %>%
+  summarise(TOTAL_TRIPS = sum(TRIPS, na.rm = TRUE), .groups = "drop")
+
+hexagon_trips <- hexagon %>% left_join(hex_trips_total, by = "HEX_ID")
+
+tm_shape(mpsz) + tm_fill("grey95") +
+tm_shape(hexagon_trips) +
+  tm_fill(col = "TOTAL_TRIPS",
+          style = "quantile", n = 10,
+          palette = "Reds",
+          title = "Trips per hex") +
+  tm_borders(alpha = 0.3) +
+  tm_layout(main.title = "Total origin trips by hexagon",
+            legend.height = 0.35, legend.width = 0.35,
+            frame = TRUE) +
+  tm_compass(type="8star", size=2, bg.color="white", bg.alpha=0.5) +
+  tm_scale_bar(bg.color="white", bg.alpha=0.5)
+
+```
+
+**Broad east–west corridor:** Higher trip generation (darker red) forms a band from the western residential towns through central estates to the east, reflecting major commuter catchments and trunk bus corridors.\
+**Residential hubs dominate:** Notable hotspots align with large HDB towns and interchanges (e.g., Jurong, Woodlands/Yishun belt, Tampines/Pasir Ris), consistent with origins where trips begin.\
+
+#### 5.3.1 Weekday Morning Peak (06:00–08:59) Trip Distribution
+
+We perform the same steps as above to get the pattern of trip origins during then morning peak.
+
+```{r}
+# Weekday morning peak: 06:00–08:59
+hex_trips_weekday_morning <- trips %>%
+  filter(DAY_TYPE == "WEEKDAY", HOUR_OF_DAY >= 6, HOUR_OF_DAY < 9) %>%
+  inner_join(bs_hex, by = "HEX_ID") %>%
+  group_by(HEX_ID) %>%
+  summarise(TOTAL_TRIPS = sum(TRIPS, na.rm = TRUE), .groups = "drop")
+
+# keep all hexagons; trips missing -> NA
+hexagon_trips_weekday_morning <- hexagon %>%
+  left_join(hex_trips_weekday_morning, by = "HEX_ID")
+
+tm_shape(mpsz) + tm_fill("grey95") +
+tm_shape(hexagon_trips_weekday_morning) +
+  tm_fill(col = "TOTAL_TRIPS",
+          style = "quantile", n = 15,
+          palette = "Reds",
+          title = "Trips per hex") +
+  tm_borders(alpha = 0.3) +
+  tm_layout(main.title = "Weekday morning origin trips by hexagon",
+            legend.height = 0.35, legend.width = 0.35,
+            frame = TRUE) +
+  tm_compass(type="8star", size=2, bg.color="white", bg.alpha=0.5) +
+  tm_scale_bar(bg.color="white", bg.alpha=0.5)
+```
+
+High trip origins cluster in the north, west and east. This shows commuter movement toward the city, as residents travel from suburban areas to work destinations.
+
+#### 5.3.2 Weekday Afternoon Peak (17:00–19:59) Trip Distribution
+
+We perform the same steps as above to get the pattern of trip origins during then morning peak.
+
+```{r}
+# --- Weekday afternoon peak: 17:00–19:59 ---
+hex_trips_weekday_pm <- trips %>%
+  filter(DAY_TYPE == "WEEKDAY", HOUR_OF_DAY >= 17, HOUR_OF_DAY < 20) %>%
+  inner_join(bs_hex, by = "HEX_ID") %>%
+  group_by(HEX_ID) %>%
+  summarise(TOTAL_TRIPS = sum(TRIPS, na.rm = TRUE), .groups = "drop")
+
+hexagon_trips_weekday_pm <- hexagon %>%
+  left_join(hex_trips_weekday_pm, by = "HEX_ID")
+
+
+tm_shape(mpsz) + tm_fill("grey95") +
+tm_shape(hexagon_trips_weekday_pm) +
+  tm_fill(col = "TOTAL_TRIPS",
+          style = "quantile", n = 15,
+          palette = "Reds",
+          title = "Trips per hex") +
+  tm_borders(alpha = 0.3) +
+  tm_layout(main.title = "Weekday PM peak (17:00–19:59): Total origin trips by hexagon",
+            legend.height = 0.35, legend.width = 0.35,
+            frame = TRUE) +
+  tm_compass(type="8star", size=2, bg.color="white", bg.alpha=0.5) +
+  tm_scale_bar(bg.color="white", bg.alpha=0.5)
+```
+
+Higher trip origins cluster in the central region duing the weekday PM peak. This shows commuter movement toward the city, as residents travel from suburban areas to work destinations. However, trip origin from residential areas still remain relatively high. This can be explained by people going to local shops, schools, secondary workplaces, or making connecting trips before heading home.
+
+#### 5.3.3 Weekend and Public Holiday (11:00–19:59) Trip Distribution
+
+We perform the same steps as above to get the pattern of trip origins during then morning peak.
+
+```{r}
+
+# --- Weekend / Public Holiday: 11:00–19:59 ---
+hex_trips_weekend_ph <- trips %>%
+  filter(DAY_TYPE %in% c("WEEKENDS/HOLIDAY"),
+         HOUR_OF_DAY >= 11, HOUR_OF_DAY < 20) %>%
+  inner_join(bs_hex, by = "HEX_ID") %>%
+  group_by(HEX_ID) %>%
+  summarise(TOTAL_TRIPS = sum(TRIPS, na.rm = TRUE), .groups = "drop")
+
+hexagon_trips_weekend_ph <- hexagon %>%
+  left_join(hex_trips_weekend_ph, by = "HEX_ID")
+
+
+tm_shape(mpsz) + tm_fill("grey95") +
+tm_shape(hexagon_trips_weekend_ph) +
+  tm_fill(col = "TOTAL_TRIPS",
+          style = "quantile", n = 15,
+          palette = "Reds",
+          title = "Trips per hex") +
+  tm_borders(alpha = 0.3) +
+  tm_layout(main.title = "Weekend/PH (11:00–19:59): Total origin trips by hexagon",
+            legend.height = 0.35, legend.width = 0.35,
+            frame = TRUE) +
+  tm_compass(type="8star", size=2, bg.color="white", bg.alpha=0.5) +
+  tm_scale_bar(bg.color="white", bg.alpha=0.5)
+```
+
+Density evenly spread as people are traveling from homes to leisure and shopping zones and back.
+
+### 5.4 Temporal Pattern of Bus Trips by Day Type
+
+We use `ggplot2` to visualize how bus trips vary by hour and day type. We first group the `trips` dataset by `DAY_TYPE` (e.g., weekday, weekend) and `HOUR_OF_DAY`, then sum the total number of trips for each combination. The resulting summarized data is plotted as a line chart, where the x-axis represents the hour of the day (0–23), the y-axis shows total trips, and each line color distinguishes a day type.
+
+```{r}
+library(ggplot2)
+
+trips_hour_day <- trips %>%
+  group_by(DAY_TYPE, HOUR_OF_DAY) %>%
+  summarise(TRIPS = sum(TRIPS, na.rm = TRUE), .groups = "drop")
+
+ggplot(trips_hour_day, aes(x = HOUR_OF_DAY, y = TRIPS, color = DAY_TYPE, group = DAY_TYPE)) +
+  geom_line(linewidth = 1) +
+  scale_x_continuous(breaks = 0:23) +
+  labs(title = "Hourly trips by day type",
+       x = "Hour of day", y = "Trips", color = "Day type") +
+  theme_minimal(base_size = 13)
+
+```
+
+On weekdays ther are 2 sharp peaks that occer in the mornings and evengings. Highest number of trips take place then. This makes sense and reflects the commute of people from home to work and back. Hence those times are the busiest. During the afternoon period trip volume drops with a small peak at around 1300 indicating people travelling to lunch.
+
+During the welkend the travel volume of trips stay relatively constant. throughout the day. The total volume of travel throughout the day is over all lower than weekdays.
+
+### 5.5 Aggregating Total Trips by Hexagon
+
+Next, to conduct spatial statistical analysis, we group the `trips` dataset by `HEX_ID`, which represents each hexagonal zone, and then calculate the total number of trips originating within each zone. Using `summarise()`, we sum all `TRIPS` values for each hexagon while ignoring any missing data (`na.rm = TRUE`). The output, stored in `hex_trips_total`, gives us the total passenger trips per hexagon, creating a clear summary of travel intensity across all zones.
+
+```{r}
+hex_trips_total <- trips %>%
+  group_by(HEX_ID) %>%
+  summarise(TOTAL_TRIPS = sum(TRIPS, na.rm = TRUE), .groups = "drop")
+
+
+```
+
+### 5.6 Hourly Trip Profiles for Top-Demand Hexagons
+
+We find the top hexagons and check their pattern. We also plot them on the Singapore map to see where they are located.
+
+```{r}
+top_hex <- hex_trips_total %>%
+  slice_max(TOTAL_TRIPS, n = 6) %>%
+  pull(HEX_ID)
+
+hex_hour <- trips %>%
+  filter(HEX_ID %in% top_hex) %>%
+  group_by(HEX_ID, DAY_TYPE, HOUR_OF_DAY) %>%
+  summarise(TRIPS = sum(TRIPS, na.rm = TRUE), .groups = "drop")
+
+ggplot(hex_hour, aes(HOUR_OF_DAY, TRIPS, color = DAY_TYPE)) +
+  geom_line(linewidth = 0.9) +
+  scale_x_continuous(breaks = 0:23) +
+  facet_wrap(~ HEX_ID, ncol = 3, scales = "free_y") +
+  labs(title = "Hourly trip profiles for top hexagons",
+       x = "Hour of day", y = "Trips", color = "Day type") +
+  theme_minimal(base_size = 12)
+
+
+# Add a flag for the top 6 hexagons
+hexagon_highlight <- hexagon %>%
+  mutate(
+    highlight = ifelse(HEX_ID %in% top_hex, "Top 6 hexagons", "Others")
+  )
+
+# Join trip totals for context
+hexagon_highlight <- hexagon_highlight %>%
+  left_join(hex_trips_total, by = "HEX_ID")
+
+# Plot: highlight top hexagons
+tm_shape(mpsz) + 
+  tm_fill("grey90") +
+tm_shape(hexagon_highlight) +
+  tm_fill(
+    col = "highlight",
+    palette = c("Top 6 hexagons" = "red", "Others" = "grey85"),
+    title = "Highlighted Hexagons"
+  ) +
+  tm_borders(alpha = 0.5) +
+  tm_layout(
+    main.title = "Top 6 Hexagons by Total Trips",
+    legend.height = 0.35, legend.width = 0.35,
+    frame = TRUE
+  ) +
+  tm_compass(type = "8star", size = 2, bg.color = "white", bg.alpha = 0.5) +
+  tm_scale_bar(bg.color = "white", bg.alpha = 0.5)
+
+```
+
+The highlighted hexagons in the map represent the **six busiest areas** in Singapore in terms of total origin trips. These zones align with **key population and transport nodes**, reflecting areas of intense commuting and mobility. The top 6 hexagons are spread across major residential areas.
+
+The highlighted hexagons represent the **six busiest areas** in Singapore in terms of total origin trips. These zones align with **key population and transport nodes**, reflecting areas of intense commuting and mobility.
+
+**Temporal Insights:**
+
+**Strong bimodal pattern on weekdays**
+
+\- **Morning peak (7–9 AM)** — sharp rise in trips, typical of **work/school departures**.
+
+\- **Evening peak (5–8 PM)** — second surge, representing **homebound trips**. - Between peaks, activity dips but remains moderate, suggesting **midday inter-district movement** (errands, deliveries, etc.).
+
+\- **Weekend/Public Holiday trend**: - Single broad plateau from **10 AM to 6 PM**, consistent with **leisure and social travel**. Absence of sharp peaks implies **flexible and non-commuting behavior**.
+
+## 6. **Local Measures of Spatial Association (LMSA) Analysis**
+
+Before computing Local Moran’s I or building spatial weight matrices, it is essential to ensure that all spatial units contain valid numerical values. Missing data (`NA`) can disrupt spatial computations and invalidate local statistics. In this step, all hexagons without trip data are removed from the analysis using `drop_na()`.
+
+```{r}
+hexagon_trips <- hexagon_trips %>%
+  drop_na()
+
+hexagon_trips_weekday_morning <- hexagon_trips_weekday_morning %>%
+  drop_na()
+
+hexagon_trips_weekday_pm <- hexagon_trips_weekday_pm %>%
+  drop_na()
+
+hexagon_trips_weekend_ph <- hexagon_trips_weekend_ph %>%
+  drop_na()
+```
+
+### 6.1 Weight matrix and LISA Functions
+
+#### Local Moran’s I Helper Functions (Weights → LISA → Maps)
+
+We are checking the outputs across the three time frames — Weekday AM, Weekday PM, and Weekend. To make this process more efficient, we condense the analysis steps into reusable functions that can be called multiple times, once for each time frame.
+
+This block defines reusable helpers for the Local Moran’s I workflow:
+
+-   **`create_weight_matrix()`** builds contiguity neighbours (`nb`) and row-standardised weights (`wt`, style = `"W"`), ready for local statistics.
+
+-   **`compute_local_moran()`** runs permutation-based Local Moran’s I (`nsim` permutations) and returns per-hexagon outputs (e.g., `ii`, `p_ii`).
+
+-   **`plot_local_moran()`** and **`plot_local_moran_pvalues()`** render the statistic and its p-values for interpretation.
+
+-   **`run_lisa_pipeline()`** stitches the steps together for a given dataset/period and optionally tags results with a `period` label.
+
+```{r}
+create_weight_matrix <- function(sf_data, style = "W", allow_zero = TRUE) {
+  sf_data %>%
+    mutate(
+      nb = st_contiguity(geometry),
+      wt = st_weights(nb, style = style, allow_zero = allow_zero),
+      .before = 1
+    ) %>%
+    mutate(
+      wt = lapply(wt, function(x) if (is.null(x)) numeric(0) else x)
+    )
+}
+
+compute_local_moran <- function(sf_data, value_col, nb_col = nb, wt_col = wt, nsim = 999, zero_policy = TRUE) {
+  sf_data %>%
+    mutate(
+      local_moran = local_moran(
+        {{ value_col }},
+        {{ nb_col }},
+        {{ wt_col }},
+        nsim = nsim,
+        zero.policy = zero_policy,
+        na.action = na.omit
+      ),
+      .before = 1
+    ) %>%
+    unnest(local_moran)
+}
+
+plot_local_moran <- function(sf_data, fill_col = "ii",
+                             title = "Local Moran's I Map") {
+  tm_shape(sf_data) +
+    tm_polygons(
+      fill = fill_col,
+      fill.scale = tm_scale_intervals(style = "pretty", n = 5, values = "brewer.RdBu"),
+      fill.legend = tm_legend(title = "Local Moran's I", position = tm_pos_out())
+    ) +
+    tm_borders(fill_alpha = 0.5) +
+    tm_title(title)
+}
+
+plot_local_moran_pvalues <- function(
+  sf_data,
+  fill_col = "p_ii",
+  title = "p-values of Local Moran's I",
+  breaks = c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+  palette = "-brewer.Reds"
+) {
+  tm_shape(sf_data) +
+    tm_polygons(
+      fill = fill_col,
+      fill.scale = tm_scale_intervals(breaks = breaks, values = palette),
+      fill.legend = tm_legend(title = "p-value", position = tm_pos_out())
+    ) +
+    tm_borders(fill_alpha = 0.5) +
+    tm_title(title)
+}
+
+run_lisa_pipeline <- function(sf_data,
+                              value_col,
+                              weight_style = "W",
+                              allow_zero = TRUE,
+                              nsim = 999,
+                              period_label = NULL) {
+  sf_w <- create_weight_matrix(sf_data, style = weight_style, allow_zero = allow_zero)
+  lisa  <- compute_local_moran(sf_w, {{ value_col }}, nsim = nsim)
+  if (!is.null(period_label)) lisa$period <- period_label
+  lisa
+}
+```
+
+### 6.2 Running Local Moran’s I by Time Period
+
+Local Moran’s I is a spatial statistic that measures **how similar or dissimilar a location’s value is compared to its neighbors**. A **high positive I** means a location with high trip counts is surrounded by other high-count areas (**hotspot**). A **high negative I** indicates a location with high values surrounded by low ones, or vice versa (**outlier**). The **p-value** shows whether these clusters are **statistically significant** (not due to random chance).
+
+We run the LISA analysis separately for Weekday AM, Weekday PM, and Weekend/PH periods using \`imap()\` to loop through each dataset in the list, where \`.x\` represents the dataset and \`.y\` represents its label (e.g., "Weekday AM Peak"). The \`\~\` symbol defines an **anonymous function**, allowing \`imap()\` to pass both \`.x\` and \`.y\` into \`run_lisa_pipeline()\` for each iteration. A reproducible seed (\`set.seed(42)\`) ensures consistent permutation results. The outputs are two map objects per period — \*\*maps_ii\*\* (Local Moran’s I values) and \*\*maps_p\*\* (p-value significance maps).
+
+```{r}
+#| label: run-periods
+set.seed(42)  # reproducible permutations
+
+inputs <- list(
+  "Weekday AM Peak" = hexagon_trips_weekday_morning,
+  "Weekday PM Peak" = hexagon_trips_weekday_pm,
+  "Weekend/PH"      = hexagon_trips_weekend_ph
+)
+
+# Compute Local Moran once per period (assumes value column is TOTAL_TRIPS)
+lisa_by_period <- imap(
+  inputs,
+  ~ run_lisa_pipeline(.x, TOTAL_TRIPS, period_label = .y)
+)
+
+# Build map objects for each period
+maps_ii <- imap(lisa_by_period, ~ plot_local_moran(.x, title = paste0("Local Moran's I — ", .y)))
+maps_p  <- imap(lisa_by_period, ~ plot_local_moran_pvalues(.x, title = paste0("p-values — ", .y)))
+
+```
+
+:::::: panel-tabset
+#### Weekday AM Peak
+
+::: {layout-ncol="1"}
+```{r}
+maps_ii[["Weekday AM Peak"]]
+maps_p[["Weekday AM Peak"]]
+```
+:::
+
+#### Weekday PM Peak
+
+::: {layout-ncol="1"}
+```{r}
+maps_ii[["Weekday PM Peak"]]
+maps_p[["Weekday PM Peak"]]
+```
+:::
+
+#### Weekend/PH
+
+::: {layout-ncol="1"}
+```{r}
+maps_ii[["Weekend/PH"]]
+maps_p[["Weekend/PH"]]
+```
+:::
+::::::
+
+#### **Weekday AM Peak**
+
+-   **Observation:** Several strong positive clusters (blue) appear in the **east and west**, indicating areas where high trip volumes are surrounded by other high values — typical of morning commute hubs.
+-   **Statistical Significance:** The p-value map shows **multiple clusters below 0.01**, confirming statistically significant morning hotspots around key employment or interchange zones.
+
+#### **Weekday PM Peak**
+
+-   **Observation:** Evening hotspots persist in similar regions but are more **localized**, suggesting concentrated return-commute activity. The Local Moran’s I values are generally lower than the AM peak, implying slightly weaker clustering.
+-   **Significance:** Several clusters remain **highly significant (p \< 0.01)**, reflecting consistent bidirectional travel flows (morning outbound, evening inbound).
+
+#### **Weekend / Public Holiday**
+
+-   **Observation:** Hotspots shift towards **southern and leisure-centric areas**, with fewer strong clusters overall. Moran’s I indicates moderate clustering, consistent with more **dispersed recreational travel**.
+-   **Significance:** Fewer but clearly defined **significant clusters (p \< 0.01)** emerge, especially in the **south**, likely corresponding to lifestyle or tourism destinations.
+
+### **6.3 Preparing and Visualising LISA Map**
+
+#### 6.3.1 Moran scatter plot
+
+A **spatial lag variable** (`lag_TOTAL_TRIPS`) is computed for each hexagon across all three periods. The spatial lag represents the **average trip intensity of neighbouring cells**, derived from the same weight matrix used in the Local Moran’s I calculation.\
+A spatial lag represents the **average value of a variable among a location’s neighbors**, capturing how nearby observations influence it. In this case, `lag_TOTAL_TRIPS` measures the mean trip intensity of neighboring hexagons for each cell.
+
+```{r}
+lisa_by_period <- purrr::imap(
+  lisa_by_period,
+  ~ .x %>%
+      dplyr::mutate(
+        lag_TOTAL_TRIPS = sfdep::st_lag(TOTAL_TRIPS, nb, wt),
+        .before = 1
+      ) %>%
+      tidyr::unnest(lag_TOTAL_TRIPS)
+)
+
+```
+
+```{r}
+purrr::iwalk(
+  lisa_by_period,
+  ~ {
+    cat("\n\n===== ", .y, " =====\n")
+    glimpse(.x)
+  }
+)
+
+
+```
+
+#### 6.3.2 Moran Scatterplots (by period)
+
+This code defines a reusable plotting function, **`moran_scatter()`**, which visualises the spatial autocorrelation between a variable and its spatial lag.
+
+```{r}
+moran_scatter <- function(data, title) {
+  ggplot(data, aes(x = TOTAL_TRIPS, y = lag_TOTAL_TRIPS)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1) +
+    labs(
+      x = "TOTAL_TRIPS",
+      y = "Spatial Lag of TOTAL_TRIPS",
+      title = paste("Moran Scatterplot –", title)
+    ) +
+    theme_minimal(base_size = 13)
+}
+
+
+```
+
+This function is used to create Moran scatter plots for each time period, illustrating the relationship between trip intensity and its spatial context.
+
+:::::: panel-tabset
+#### Weekday AM (06:00–08:59)
+
+::: {layout-ncol="1"}
+```{r}
+plot1 <- moran_scatter(
+  lisa_by_period[["Weekday AM Peak"]],
+  "Weekday Morning Peak (6–9 AM)"
+)
+
+plot1
+```
+:::
+
+#### Weekday PM (17:00–19:59)
+
+::: {layout-ncol="1"}
+```{r}
+plot2 <- moran_scatter(
+  lisa_by_period[["Weekday PM Peak"]],
+  "Weekday Afternoon Peak (5–8 PM)"
+)
+plot2
+```
+:::
+
+#### Weekend / Public Holiday (11:00–19:59)
+
+::: {layout-ncol="1"}
+```{r}
+plot3 <- moran_scatter(
+  lisa_by_period[["Weekend/PH"]],
+  "Weekend/Public Holiday (11 AM–8 PM)"
+)
+plot3
+```
+:::
+::::::
+
+-   **Positive spatial autocorrelation in all periods.** The red OLS line slopes upward across the three plots, indicating that hexagons with higher trip origins tend to be near other high-origin hexagons (and vice-versa).
+-   **Strength varies by period.** The slope is **steepest in the Weekday AM** plot (strongest local clustering during the morning commute), **moderate in Weekday PM**, and **weakest on Weekend/PH**, consistent with more dispersed leisure travel.
+-   **High-leverage points.** A few extreme high-trip hexagons pull the fit upward; they likely correspond to major hubs/interchanges and should align with LISA hot spots.
+-   **Implication.** Morning demand is the most spatially clustered (commute origins), evening remains clustered but more diffuse, and weekend clustering relaxes—useful for targeting peak-focused service enhancements and hub-area capacity.
+
+### 6.4 Moran scatter plot with LISA quadrants
+
+The code below draws **quadrant-colored Moran scatterplots** for each period (Weekday AM, Weekday PM, Weekend/PH).\
+Points are colored by LISA quadrant, the dashed lines mark the **mean of `TOTAL_TRIPS`** (x) and the **mean spatial lag** (y), and the black line is the OLS fit.
+
+:::::: panel-tabset
+#### Weekday AM Peak
+
+::: {layout-ncol="1"}
+```{r}
+ggplot(data = lisa_by_period[["Weekday AM Peak"]], 
+       aes(x = TOTAL_TRIPS, 
+           y = lag_TOTAL_TRIPS, 
+           color = mean)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", 
+              se = FALSE, 
+              color = "black") +
+  geom_hline(yintercept=mean(lisa_by_period[["Weekday AM Peak"]]$lag_TOTAL_TRIPS), lty=2) + 
+    geom_vline(xintercept=mean(lisa_by_period[["Weekday AM Peak"]]$TOTAL_TRIPS), lty=2) +
+  scale_color_manual(
+    values = c("High-High" = "red", 
+               "Low-Low" = "blue",
+               "Low-High" = "lightblue", 
+               "High-Low" = "pink")) +
+  labs(x = "TOTAL_TRIPS",
+       y = "Spatial Lag of TOTAL_TRIPS",
+       title = "Moran Scatterplot with LISA Quadrants") +
+  theme_minimal()
+
+
+```
+:::
+
+#### Weekday PM Peak
+
+::: {layout-ncol="1"}
+```{r}
+# Weekday PM Peak
+ggplot(data = lisa_by_period[["Weekday PM Peak"]], 
+       aes(x = TOTAL_TRIPS, 
+           y = lag_TOTAL_TRIPS, 
+           color = mean)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", 
+              se = FALSE, 
+              color = "black") +
+  geom_hline(yintercept=mean(lisa_by_period[["Weekday PM Peak"]]$lag_TOTAL_TRIPS), lty=2) + 
+    geom_vline(xintercept=mean(lisa_by_period[["Weekday PM Peak"]]$TOTAL_TRIPS), lty=2) +
+  scale_color_manual(
+    values = c("High-High" = "red", 
+               "Low-Low" = "blue",
+               "Low-High" = "lightblue", 
+               "High-Low" = "pink")) +
+  labs(x = "TOTAL_TRIPS",
+       y = "Spatial Lag of TOTAL_TRIPS",
+       title = "Moran Scatterplot with LISA Quadrants") +
+  theme_minimal()
+
+```
+:::
+
+#### Weekend / Public Holiday
+
+::: {layout-ncol="1"}
+```{r}
+# Weekend / Public Holiday
+ggplot(data = lisa_by_period[["Weekend/PH"]], 
+       aes(x = TOTAL_TRIPS, 
+           y = lag_TOTAL_TRIPS, 
+           color = mean)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", 
+              se = FALSE, 
+              color = "black") +
+  geom_hline(yintercept=mean(lisa_by_period[["Weekend/PH"]]$lag_TOTAL_TRIPS), lty=2) + 
+    geom_vline(xintercept=mean(lisa_by_period[["Weekend/PH"]]$TOTAL_TRIPS), lty=2) +
+  scale_color_manual(
+    values = c("High-High" = "red", 
+               "Low-Low" = "blue",
+               "Low-High" = "lightblue", 
+               "High-Low" = "pink")) +
+  labs(x = "TOTAL_TRIPS",
+       y = "Spatial Lag of TOTAL_TRIPS",
+       title = "Moran Scatterplot with LISA Quadrants") +
+  theme_minimal()
+
+```
+:::
+::::::
+
+Weekday AM and PM periods show strong, significant **High–High clustering**, consistent with commute patterns and central mobility corridors.\
+Weekend/PH trips are **less spatially autocorrelated**, suggesting **greater spatial mixing** of travel behavior typical of leisure and social trips.
+
+### 6.5 LISA Map
+
+```{r}
+signif <- 0.05       
+```
+
+#### 6.5.1 Plotting and visualising LISA map
+
+:::::: panel-tabset
+#### Weekday AM Peak
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekday AM Peak ---
+lisa_am <- lisa_by_period[["Weekday AM Peak"]] %>%
+  dplyr::mutate(
+    LISA_cluster = ifelse(p_ii < 0.05, as.character(mean), "Insignificant"),
+    LISA_cluster = factor(
+      LISA_cluster,
+      levels = c("Insignificant", "Low-Low", "Low-High", "High-Low", "High-High")
+    )
+  )
+
+lisa_map_am <- tm_shape(lisa_am) + 
+  tm_polygons(
+    fill = "LISA_cluster",
+    fill.scale = tm_scale_categorical(
+      values = c("grey80", "blue", "lightblue", "pink", "red")
+    ),
+    fill.legend = tm_legend(
+      title = "LISA Cluster",
+      position = tm_pos_in("left", "bottom")
+    )
+  ) +
+  tm_borders() +
+  tm_title("Local Moran's I Clusters (p < 0.05) — Weekday AM Peak")
+
+lisa_map_am
+```
+:::
+
+#### Weekkday PM Peak
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekday PM Peak ---
+lisa_pm <- lisa_by_period[["Weekday PM Peak"]] %>%
+  dplyr::mutate(
+    LISA_cluster = ifelse(p_ii < 0.05, as.character(mean), "Insignificant"),
+    LISA_cluster = factor(
+      LISA_cluster,
+      levels = c("Insignificant", "Low-Low", "Low-High", "High-Low", "High-High")
+    )
+  )
+
+lisa_map_pm <- tm_shape(lisa_pm) + 
+  tm_polygons(
+    fill = "LISA_cluster",
+    fill.scale = tm_scale_categorical(
+      values = c("grey80", "blue", "lightblue", "pink", "red")
+    ),
+    fill.legend = tm_legend(
+      title = "LISA Cluster",
+      position = tm_pos_in("left", "bottom")
+    )
+  ) +
+  tm_borders() +
+  tm_title("Local Moran's I Clusters (p < 0.05) — Weekday PM Peak")
+lisa_map_pm
+```
+:::
+
+#### Weekend
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekend / Public Holiday ---
+lisa_we <- lisa_by_period[["Weekend/PH"]] %>%
+  dplyr::mutate(
+    LISA_cluster = ifelse(p_ii < 0.05, as.character(mean), "Insignificant"),
+    LISA_cluster = factor(
+      LISA_cluster,
+      levels = c("Insignificant", "Low-Low", "Low-High", "High-Low", "High-High")
+    )
+  )
+
+lisa_map_we <- tm_shape(lisa_we) + 
+  tm_polygons(
+    fill = "LISA_cluster",
+    fill.scale = tm_scale_categorical(
+      values = c("grey80", "blue", "lightblue", "pink", "red")
+    ),
+    fill.legend = tm_legend(
+      title = "LISA Cluster",
+      position = tm_pos_in("left", "bottom")
+    )
+  ) +
+  tm_borders() +
+  tm_title("Local Moran's I Clusters (p < 0.05) — Weekend / Public Holiday")
+lisa_map_we
+```
+:::
+::::::
+
+#### Weekday AM Peak
+
+-   **High–High (red) clusters** concentrate in multiple town-sized pockets across the north/east and southwest, consistent with **strong commute origins** near interchanges and dense housing.
+-   **Low–High (light blue)** cells appear on the **edges of hotspots**, marking transition belts between active hubs and quieter neighborhoods.
+-   **High–Low (pink)** are rare, indicating few isolated high-origin cells amid low-demand areas.
+-   Pattern: **coherent morning departure hubs** with crisp boundaries.
+
+#### Weekday PM Peak
+
+-   Fewer, more **localized High–High clusters** than AM, suggesting **return trips are spatially tighter** around specific nodes (homebound dispersion across more cells lowers clustering elsewhere).
+-   Outlier types (Low–High / High–Low) remain sparse and mostly at **hotspot peripheries**.
+-   Pattern: **Evening clustering persists but weakens**, aligning with broader home-bound dispersion.
+
+#### Weekend / Public Holiday
+
+-   **High–High clusters** shift and appear around **recreation/retail-oriented belts** (southern and eastern pockets), while many AM/PM commute clusters **fade**.
+-   More scattered **Low–High** edges reflect **mixed leisure catchments** and weaker spatial dependence.
+-   Pattern: **Leisure-driven hubs** replace commute hubs; clustering is **present but less extensive**.
+
+## 7 Hot Spots and Cold Spots Analysis (HCSA)
+
+### 7.1 Deriving distance weight matrix
+
+#### 7.2 Computing fixed distance weights
+
+A fixed distance weight defines how spatial relationships are measured within a set distance threshold. It ensures that only features (in this case, hexagons) located within a specific distance of each other are treated as neighbors when computing spatial statistics such as Moran’s I or Gi\*. The “fixed” distance means that all hexagons use the same cutoff distance to determine neighborhood influence, regardless of how densely or sparsely they are distributed. This method is useful for maintaining consistency across the study area, ensuring that each hexagon has at least one neighbor and that spatial dependence is assessed within a uniform spatial range.
+
+This code calculates the **minimum spatial distance** (critical threshold) needed so each hexagon has at least one neighbor — essential for building spatial weight matrices.
+
+-   **`critical_threshold()`** finds this distance for each dataset (AM, PM, Weekend).\
+-   **Separate thresholds** are computed for each period to reflect different spatial patterns of trip density.\
+-   The results (`ct_am`, `ct_pm`, `ct_we`) are stored in a list `cts` for later use in spatial autocorrelation (e.g., Moran’s I / LISA).
+
+```{r}
+# Compute critical thresholds separately for each period
+
+# All trips
+ct_all <- sfdep::critical_threshold(st_geometry(hexagon_trips))
+ct_all
+
+# Weekday morning peak
+ct_am <- sfdep::critical_threshold(st_geometry(hexagon_trips_weekday_morning))
+ct_am
+
+# Weekday afternoon peak
+ct_pm <- sfdep::critical_threshold(st_geometry(hexagon_trips_weekday_pm))
+ct_pm
+
+# Weekend / Public Holiday
+ct_we <- sfdep::critical_threshold(st_geometry(hexagon_trips_weekend_ph))
+ct_we
+
+cts <- list(
+  "Weekday AM Peak" = ct_am,
+  "Weekday PM Peak" = ct_pm,
+  "Weekend/PH"      = ct_we
+)
+```
+
+Next, we create functions to use later.
+
+-   **`build_fdw_weights()`** creates spatial weights for one dataset:
+    -   Finds neighbors within a fixed distance `ct`.
+    -   Optionally includes self-neighbors.
+    -   Produces a row-standardized weight matrix (`style="W"`).
+-   **`build_fdw_for_periods()`** runs the same for multiple datasets (e.g., AM, PM, Weekend), applying each period’s corresponding critical threshold.
+
+```{r}
+# 1) Single-dataset FDW weights builder
+build_fdw_weights <- function(sf_data, ct, style = "W", allow_zero = TRUE, add_self = TRUE) {
+  nb_raw <- sfdep::st_dist_band(st_geometry(sf_data), upper = ct)
+  nb_use <- if (add_self) sfdep::include_self(nb_raw) else nb_raw
+
+  sf_data %>%
+    dplyr::mutate(
+      nb = nb_use,
+      wt = sfdep::st_weights(nb, style = style, allow_zero = allow_zero),
+      .before = 1
+    )
+}
+
+# 2) Many datasets at once (names must match between inputs & cts)
+build_fdw_for_periods <- function(inputs_list, ct_list, style = "W", allow_zero = TRUE, add_self = TRUE) {
+  stopifnot(all(names(inputs_list) %in% names(ct_list)))
+  purrr::imap(inputs_list, ~ build_fdw_weights(.x, ct = ct_list[[.y]], style = style, allow_zero = allow_zero, add_self = add_self))
+}
+
+
+```
+
+```{r}
+trips_fdw_by_period <- build_fdw_for_periods(inputs, cts)
+
+# Access examples:
+trips_fdw_by_period[["Weekday AM Peak"]]
+trips_fdw_by_period[["Weekday PM Peak"]]
+trips_fdw_by_period[["Weekend/PH"]]
+```
+
+#### 7.3 Computing adaptive distance weights
+
+An adaptive distance weight assigns neighbors dynamically so that each feature (hexagon) has a fixed number of nearest neighbors rather than using a constant distance threshold. Instead of including all hexagons within a uniform distance, the adaptive method ensures that areas with sparse data still have enough neighbors to calculate spatial statistics, while dense areas only include the closest few. This makes the analysis more balanced across regions with varying data densities.
+
+-   **`build_adw_weights()`** creates spatial weights using **k-nearest neighbors (kNN)**:
+    -   Each hexagon connects to its `k` nearest neighbors (default `k=6`).
+    -   Optionally includes itself (`add_self=TRUE`).
+    -   Produces row-standardized weights (`style="W"`).
+-   **`build_adw_for_periods()`** applies this process to **multiple datasets** (e.g., AM, PM, Weekend).
+-   **Purpose:** Ensures each region has a consistent number of spatial neighbors — useful when areas vary in size
+
+```{r}
+
+# 1) Single-dataset ADW (k-nearest neighbors) weights builder
+build_adw_weights <- function(sf_data, k = 6, style = "W", allow_zero = TRUE, add_self = TRUE) {
+  nb_raw <- sfdep::st_knn(st_geometry(sf_data), k = k)
+  nb_use <- if (add_self) sfdep::include_self(nb_raw) else nb_raw
+
+  sf_data %>%
+    dplyr::mutate(
+      nb = nb_use,
+      wt = sfdep::st_weights(nb, style = style, allow_zero = allow_zero),
+      .before = 1
+    )
+}
+
+# 2) Many datasets at once (periods)
+build_adw_for_periods <- function(inputs_list, k = 6, style = "W", allow_zero = TRUE, add_self = TRUE) {
+  purrr::imap(inputs_list, ~ build_adw_weights(.x, k = k, style = style,
+                                               allow_zero = allow_zero, add_self = add_self))
+}
+
+```
+
+```{r}
+trips_adw_by_period <- build_adw_for_periods(inputs, k = 6)
+
+# Access examples:
+trips_adw_by_period[["Weekday AM Peak"]]
+trips_adw_by_period[["Weekday PM Peak"]]
+trips_adw_by_period[["Weekend/PH"]]
+
+```
+
+### **7.4 Computing local Gi\***
+
+Local Gi\* Identifies statistically significant **hotspots (high-high)** and **coldspots (low-low)** of trip activity across periods.
+
+-   Calculates **local Getis-Ord Gi\*** statistics (hotspot analysis) for each spatial unit.
+    -   Uses permutation testing (`nsim = 99`) to assess significance.
+    -   Inputs:
+        -   `value_col`: variable of interest (e.g., `TOTAL_TRIPS`)
+        -   `nb_col`, `wt_col`: spatial neighbors and weights
+    -   Adds a new `gistar` column (with z-scores and p-values).
+-   **`HCSA_fdw_by_period`**
+    -   Runs `build_gistar()` for **each time period** (Weekday AM, PM, Weekend) using pre-built FDW weights.
+
+```{r}
+build_gistar <- function(sf_data, value_col, nb_col = nb, wt_col = wt, nsim = 99) {
+  sf_data %>%
+    dplyr::mutate(
+      gistar = sfdep::local_gstar_perm(
+        {{ value_col }}, {{ nb_col }}, {{ wt_col }}, nsim = nsim
+      ),
+      .before = 1
+    ) %>%
+    tidyr::unnest(gistar)
+}
+
+HCSA_fdw_by_period <- purrr::imap(
+  trips_fdw_by_period,
+  ~ build_gistar(.x, TOTAL_TRIPS)
+)
+```
+
+**Purpose:** Identifies statistically significant **hotspots (high-high)** and **coldspots (low-low)** of trip activity across periods.
+
+### **7.5 Preparing and Visualising HCSA Map**
+
+#### 7.5.1 Mapping Gi\* with fix distance weights
+
+The Gi\* statistic identifies **statistically significant spatial clustering** of high or low trip counts (TOTAL_TRIPS).\
+Blue shades denote **hotspots** (areas with high trip intensity surrounded by other high values), while red shades denote **coldspots** (low trip intensity areas).
+
+This code visualizes **spatial hotspots and coldspots** of trip activity for the **Weekday AM Peak** period using the **Getis-Ord Gi\*** statistic.
+
+-   **Red areas** → Statistically significant **hotspots** (high trip concentration).\
+-   **Blue areas** → Statistically significant **coldspots** (low trip concentration).\
+-   The map uses the **Fixed Distance Weight (FDW)** structure to define spatial relationships.\
+-   The legend shows the Gi\* z-scores, where higher positive values indicate stronger clustering of high values.
+
+:::::: panel-tabset
+#### Weekday AM Peak
+
+::: {layout-ncol="1"}
+```{r}
+gi_map_am <- tm_shape(HCSA_fdw_by_period[["Weekday AM Peak"]]) +
+  tm_polygons(
+    fill = "gi_star",
+    fill.scale = tm_scale_intervals(
+      style = "pretty",
+      n = 6,
+      values = "brewer.RdBu"   # red = hot, blue = cold
+    ),
+    fill.legend = tm_legend(
+      title = "Gi*",
+      position = tm_pos_out()
+    )
+  ) +
+  tm_borders(fill_alpha = 0.5) +
+  tm_title("Gi* of TOTAL_TRIPS (Fixed Bandwidth) — Weekday AM Peak")
+gi_map_am
+
+```
+:::
+
+#### Weekday PM Peak
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekday PM Peak ---
+gi_map_pm <- tm_shape(HCSA_fdw_by_period[["Weekday PM Peak"]]) +
+  tm_polygons(
+    fill = "gi_star",
+    fill.scale = tm_scale_intervals(
+      style = "pretty",
+      n = 6,
+      values = "brewer.RdBu"
+    ),
+    fill.legend = tm_legend(
+      title = "Gi*",
+      position = tm_pos_out()
+    )
+  ) +
+  tm_borders(fill_alpha = 0.5) +
+  tm_title("Gi* of TOTAL_TRIPS (Fixed Bandwidth) — Weekday PM Peak")
+gi_map_pm
+```
+:::
+
+#### Weekend / Public Holiday
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekend / Public Holiday ---
+gi_map_we <- tm_shape(HCSA_fdw_by_period[["Weekend/PH"]]) +
+  tm_polygons(
+    fill = "gi_star",
+    fill.scale = tm_scale_intervals(
+      style = "pretty",
+      n = 6,
+      values = "brewer.RdBu"
+    ),
+    fill.legend = tm_legend(
+      title = "Gi*",
+      position = tm_pos_out()
+    )
+  ) +
+  tm_borders(fill_alpha = 0.5) +
+  tm_title("Gi* of TOTAL_TRIPS (Fixed Bandwidth) — Weekend / Public Holiday")
+gi_map_we
+```
+:::
+::::::
+
+During the **Weekday AM Peak (6–9 AM)**, strong hotspots are observed in the central and eastern regions, corresponding to major work and transport hubs, while coldspots dominate the western residential zones where fewer trips originate in the morning. This pattern indicates heavy commuter flows from residential neighborhoods toward employment centers.
+
+In the **Weekday PM Peak (5–8 PM)**, hotspots remain concentrated in central and eastern areas but expand slightly, reflecting return-trip behavior as commuters travel back home. Coldspots persist in the west, showing spatial stability in trip demand between morning and evening peaks.
+
+During the **Weekend and Public Holiday period (11 AM–8 PM)**, hotspots become more scattered and localized around recreational and shopping districts, while coldspots in the west are less pronounced. This change highlights a shift from structured commuting patterns to more leisure-oriented and evenly distributed travel activity across the city.
+
+#### 7.5.2 Mapping local Gi\* p-values
+
+These maps visualize the **statistical significance** of spatial clustering (hotspots and coldspots) of TOTAL_TRIPS across different time periods, using **simulated p-values**.\
+Darker red areas represent regions with **highly significant clustering** (p \< 0.01).
+
+:::::: panel-tabset
+#### Weekday AM Peak
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekday AM Peak ---
+gi_p_am <- tm_shape(HCSA_fdw_by_period[["Weekday AM Peak"]]) +
+  tm_polygons(
+    fill = "p_sim",
+    fill.scale = tm_scale_intervals(
+      breaks = c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+      values = "-brewer.Reds"
+    ),
+    fill.legend = tm_legend(
+      title = "Simulated p-value",
+      position = tm_pos_out()
+    )
+  ) +
+  tm_borders(fill_alpha = 0.5) +
+  tm_title("p-values of Local Gi* of TOTAL_TRIPS (Fixed Distance) — Weekday AM Peak")
+gi_p_am
+```
+:::
+
+#### Weekday PM Peak
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekday PM Peak ---
+gi_p_pm <- tm_shape(HCSA_fdw_by_period[["Weekday PM Peak"]]) +
+  tm_polygons(
+    fill = "p_sim",
+    fill.scale = tm_scale_intervals(
+      breaks = c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+      values = "-brewer.Reds"
+    ),
+    fill.legend = tm_legend(
+      title = "Simulated p-value",
+      position = tm_pos_out()
+    )
+  ) +
+  tm_borders(fill_alpha = 0.5) +
+  tm_title("p-values of Local Gi* of TOTAL_TRIPS (Fixed Distance) — Weekday PM Peak")
+gi_p_pm
+```
+:::
+
+#### Weekend / Public Holiday
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekend / Public Holiday ---
+gi_p_we <- tm_shape(HCSA_fdw_by_period[["Weekend/PH"]]) +
+  tm_polygons(
+    fill = "p_sim",
+    fill.scale = tm_scale_intervals(
+      breaks = c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+      values = "-brewer.Reds"
+    ),
+    fill.legend = tm_legend(
+      title = "Simulated p-value",
+      position = tm_pos_out()
+    )
+  ) +
+  tm_borders(fill_alpha = 0.5) +
+  tm_title("p-values of Local Gi* of TOTAL_TRIPS (Fixed Distance) — Weekend / Public Holiday")
+gi_p_we
+```
+:::
+::::::
+
+During the **Weekday AM Peak**, significant hotspots are concentrated in the central and eastern regions, corresponding to major employment and transport hubs, while smaller clusters appear in the west, likely linked to industrial or residential commuting zones. This indicates concentrated morning travel flows toward the city center, typical of workday commuting behavior.
+
+In the **Weekday PM Peak**, similar clusters persist, showing stable spatial patterns but with fewer highly significant areas, suggesting slightly weaker yet consistent evening return trips.
+
+Over the **Weekend and Public Holidays**, the number of significant clusters decreases, and spatial significance becomes more dispersed, reflecting more varied and less structured movement. The few remaining hotspots are mainly in central recreational areas, aligning with leisure-oriented travel activity rather than routine commuting.
+
+#### 7.6 Plotting and visualising HCSA Map
+
+Next we classify the spatial units into **Hot spots**, **Cold spots**, or **Insignificant** areas based on Gi\* test results.
+
+This code defines and applies a function to classify spatial clusters based on Local Gi\* results. The function `create_gistar_clusters()` takes a spatial dataset (`sf_data`) and adds a new column called `HCSA_cluster`, which labels each hexagon according to its statistical significance (`p_sim`) and cluster type (`cluster`). Specifically:\
+- If `p_sim > 0.05`, the cell is marked as **"Insignificant"**, meaning no significant spatial clustering.\
+- If `p_sim ≤ 0.05` and `cluster == "High"`, it’s classified as a **"Hot spot"**, representing high trip concentrations surrounded by similar high values.\
+- If `p_sim ≤ 0.05` and `cluster == "Low"`, it’s classified as a **"Cold spot"**, representing low trip concentrations surrounded by other low values.
+
+```{r}
+create_gistar_clusters <- function(sf_data) {
+  sf_data %>%
+    mutate(
+      HCSA_cluster = case_when(
+        p_sim > 0.05 ~ "Insignificant",
+        p_sim <= 0.05 & cluster == "High" ~ "Hot spot",
+        p_sim <= 0.05 & cluster == "Low"  ~ "Cold spot",
+        TRUE ~ "Other"
+      ),
+      HCSA_cluster = factor(
+        HCSA_cluster,
+        levels = c("Insignificant", "Hot spot", "Cold spot")
+      ),
+      .before = 1
+    )
+}
+
+```
+
+```{r}
+HCSA_fdw_by_period <- imap(
+  HCSA_fdw_by_period,
+  ~ create_gistar_clusters(.x)
+)
+```
+
+We now **choropleth map** showing **HCSA (Hot/Cold Spot Analysis)** results for the **Weekday AM Peak** period.
+
+:::::: panel-tabset
+#### Weekday AM Peak
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekday AM Peak ---
+HCSA_map_am <- tm_shape(HCSA_fdw_by_period[["Weekday AM Peak"]]) + 
+  tm_polygons(
+    fill = "HCSA_cluster",
+    fill.scale = tm_scale_categorical(
+      values = c(
+        "grey80",  # Insignificant
+        "red",     # Hot spot
+        "blue"     # Cold spot
+      )
+    ),
+    fill.legend = tm_legend(
+      title = "HCSA Cluster",
+      position = tm_pos_in("left", "bottom")
+    )
+  ) +
+  tm_borders() +
+  tm_title("HCSA Clusters (p < 0.05) — Weekday AM Peak")
+HCSA_map_am
+```
+:::
+
+#### Weekday PM Peak
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekday PM Peak ---
+HCSA_map_pm <- tm_shape(HCSA_fdw_by_period[["Weekday PM Peak"]]) + 
+  tm_polygons(
+    fill = "HCSA_cluster",
+    fill.scale = tm_scale_categorical(
+      values = c(
+        "grey80",  # Insignificant
+        "red",     # Hot spot
+        "blue"     # Cold spot
+      )
+    ),
+    fill.legend = tm_legend(
+      title = "HCSA Cluster",
+      position = tm_pos_in("left", "bottom")
+    )
+  ) +
+  tm_borders() +
+  tm_title("HCSA Clusters (p < 0.05) — Weekday PM Peak")
+HCSA_map_pm
+```
+:::
+
+#### Weekend / Public Holiday
+
+::: {layout-ncol="1"}
+```{r}
+# --- Weekend / Public Holiday ---
+HCSA_map_we <- tm_shape(HCSA_fdw_by_period[["Weekend/PH"]]) + 
+  tm_polygons(
+    fill = "HCSA_cluster",
+    fill.scale = tm_scale_categorical(
+      values = c(
+        "grey80",  # Insignificant
+        "red",     # Hot spot
+        "blue"     # Cold spot
+      )
+    ),
+    fill.legend = tm_legend(
+      title = "HCSA Cluster",
+      position = tm_pos_in("left", "bottom")
+    )
+  ) +
+  tm_borders() +
+  tm_title("HCSA Clusters (p < 0.05) — Weekend / Public Holiday")
+HCSA_map_we
+```
+:::
+::::::
+
+#### Weekday AM Peak
+
+-   **Hot spots (red)** appear mainly in west, north and east, indicating areas with intense morning travel—likely towards workplaces or schools.\
+-   **Cold spots (blue)** occur in **southern zones**, suggesting low trip concentrations during morning hours.\
+-   The **grey areas** show no statistically significant clustering.
+
+#### Weekday PM Peak
+
+-   Many of thte hotspots disappear from the west, north and east. although a handful remains.\
+-   **Cold spots** increase in the same regions.\
+-   Fewer significant clusters than in the morning, indicating a **weaker evening spatial pattern**.
+
+#### Weekend / Public Holiday
+
+-   **Hot spots** are more scattered and some appear near **central region**, aligning with leisure-based travel.\
+-   **Cold spots** are concentrated in **residential outskirts**, showing reduced weekend mobility.\
+-   The overall pattern is **more diffuse**, reflecting varied weekend travel behaviors.
+
+# 8 Emerging Hot Spot Analysis
+
+For this we are going to study the data over 3 months
+
+## Load extra data
+
+We load the data from LTA with monthly trip data from the past 3 months.
+
+```{r}
+odbus_09 <- read_csv("data/LTADataMall/origin_destination_bus_202509.csv")
+odbus_08 <- read_csv("data/LTADataMall/origin_destination_bus_202508.csv")
+odbus_07 <- read_csv("data/LTADataMall/origin_destination_bus_202507.csv")
+```
+
+```{r}
+# Put all the data frames into a list
+odbus_list <- list(odbus_07, odbus_08, odbus_09)
+
+# Apply the same transformation to each
+trips_list <- map(odbus_list, ~ .x %>%
+  select(ORIGIN_PT_CODE, DAY_TYPE, TIME_PER_HOUR, TOTAL_TRIPS) %>%
+  rename(
+    BUS_STOP_N = ORIGIN_PT_CODE,
+    HOUR_OF_DAY = TIME_PER_HOUR,
+    TRIPS = TOTAL_TRIPS
+  ) %>%
+  mutate(BUS_STOP_N = as.factor(BUS_STOP_N))
+)
+
+# Optionally combine all into one dataset
+trips_all <- bind_rows(trips_list)
+```
+
+Next we will merge and clean and aggregates bus trip data from multiple months into one dataset, grouped by spatial hexagons.
+
+1.  **Libraries Loaded**
+    -   `dplyr` for data manipulation
+    -   `purrr` for functional programming and list operations
+2.  **List Creation and Transformation**
+    -   Combines the three monthly datasets (`odbus_07`, `odbus_08`, `odbus_09`) into a named list.
+    -   `imap_dfr()` applies identical transformations to each dataset and binds the results into one data frame (`trips_all`).
+3.  **Data Cleaning and Renaming**
+    -   Keeps only the relevant columns: origin code, day type, hour, and total trips.\
+    -   Renames them to standardized names: `BUS_STOP_N`, `DAY_TYPE`, `HOUR_OF_DAY`, `TRIPS`.\
+    -   Converts `BUS_STOP_N` to a factor and adds a `MONTH` column derived from the list name.
+4.  **Spatial Join**
+    -   Joins the trips data with `bs_hex`, linking each bus stop to its corresponding hexagon (`HEX_ID`).
+5.  **Aggregation**
+    -   Groups the data by `HEX_ID`, `DAY_TYPE`, `HOUR_OF_DAY`, and `MONTH`,\
+        then sums up total trips within each hexagon for each time and period combination.
+
+```{r}
+
+library(dplyr)
+library(purrr)
+
+trips_all <- list(
+    "202507" = odbus_07,
+    "202508" = odbus_08,
+    "202509" = odbus_09
+  ) %>%
+  imap_dfr(~ .x %>%
+    select(ORIGIN_PT_CODE, DAY_TYPE, TIME_PER_HOUR, TOTAL_TRIPS) %>%
+    rename(
+      BUS_STOP_N = ORIGIN_PT_CODE,
+      HOUR_OF_DAY = TIME_PER_HOUR,
+      TRIPS = TOTAL_TRIPS
+    ) %>%
+    mutate(
+      BUS_STOP_N = as.factor(BUS_STOP_N),
+      MONTH = as.integer(.y)  # Add month label from list name
+    )
+  ) %>%
+  inner_join(bs_hex, by = "BUS_STOP_N") %>%
+  group_by(HEX_ID, DAY_TYPE, HOUR_OF_DAY, MONTH) %>%
+  summarise(TRIPS = sum(TRIPS), .groups = "drop")
+
+
+```
+
+```{r}
+hexagon2 <- hexagon %>%
+  mutate(HEX_ID = as.character(HEX_ID)) %>%   # <-- fix type
+  select(HEX_ID, geometry) %>%                # keep just id + geometry
+  distinct(HEX_ID, .keep_all = TRUE)          # ensure unique locations
+```
+
+## **8.2 Creating a Time Series Cube**
+
+This code segments total bus trips by time of day and day type across months.
+
+```{r}
+trips_all  <- trips_all  %>% mutate(HEX_ID = as.character(HEX_ID))
+
+# All weekday AM trips (6 AM – 11 AM)
+all_weekday_trips_am <- trips_all %>%
+  filter(DAY_TYPE == "WEEKDAY", HOUR_OF_DAY >= 6, HOUR_OF_DAY < 12) %>%
+  group_by(HEX_ID, MONTH) %>%
+  summarise(TRIPS = sum(TRIPS), .groups = "drop")
+
+# All weekday PM trips (12 PM – 11 PM)
+all_weekday_trips_pm <- trips_all %>%
+  filter(DAY_TYPE == "WEEKDAY", HOUR_OF_DAY >= 12, HOUR_OF_DAY <= 23) %>%
+  group_by(HEX_ID, MONTH) %>%
+  summarise(TRIPS = sum(TRIPS), .groups = "drop")
+
+# All weekend / public holiday trips (sum all hours)
+all_weekend_trips_ph <- trips_all %>%
+  filter(DAY_TYPE == "WEEKENDS/HOLIDAY") %>%
+  group_by(HEX_ID, MONTH) %>%
+  summarise(TRIPS = sum(TRIPS), .groups = "drop")
+```
+
+1.  **Prep geometry**
+    -   Ensure `HEX_ID` is character and unique in `hexagon2`.
+2.  **Monthly indexing**
+    -   `prep_monthly()` converts integer `MONTH` (YYYYMM) to a `TIME_PERIOD` date (1st of month) and keeps `HEX_ID`, `TIME_PERIOD`, `TRIPS`.
+3.  **Create period tables**
+    -   Apply `prep_monthly()` to AM/PM/Weekend aggregates → `am2`, `pm2`, `wk2`.
+4.  **Common time axis**
+    -   `months_set` is the union of months across all periods to align time indices.
+5.  **Build dense space–time cubes**
+    -   `make_st_cube()`:
+        -   Keeps only hexagons in `geom`.
+        -   `complete()` all `HEX_ID` × `months_axis` combinations; fill trips with 0 (or NA).
+        -   Validates rows = locations × times.
+        -   Constructs a `spacetime` cube with geometry and time columns.
+6.  **Create cubes and verify**
+    -   `trips_st_am`, `trips_st_pm`, `trips_st_weekend` built using the shared `months_set`.
+    -   `is_spacetime_cube()` checks object validity.
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+#ensure geometry is clean & HEX_ID is character
+hexagon2 <- hexagon2 %>%
+  mutate(HEX_ID = as.character(HEX_ID)) %>%
+  distinct(HEX_ID, .keep_all = TRUE)
+
+#Helper to convert MONTH int -> Date and dedupe
+prep_monthly <- function(df) {
+  df %>%
+    mutate(
+      HEX_ID = as.character(HEX_ID),
+      year  = MONTH %/% 100L,
+      month = MONTH %% 100L,
+      TIME_PERIOD = as.Date(sprintf("%04d-%02d-01", year, month))
+    ) %>%
+    select(HEX_ID, TIME_PERIOD, TRIPS) %>%
+    distinct()
+}
+
+am2 <- prep_monthly(all_weekday_trips_am)
+pm2 <- prep_monthly(all_weekday_trips_pm)
+wk2 <- prep_monthly(all_weekend_trips_ph)
+
+#Use a COMMON month axis across all cubes (union of months)
+months_set <- sort(Reduce(union, list(unique(am2$TIME_PERIOD),
+                                      unique(pm2$TIME_PERIOD),
+                                      unique(wk2$TIME_PERIOD))))
+
+#Helper to densify and build a spacetime cube
+make_st_cube <- function(df2, geom, months_axis, fill_zero = TRUE) {
+  dense <- df2 %>%
+    semi_join(geom %>% select(HEX_ID), by = "HEX_ID") %>%
+    complete(
+      HEX_ID = unique(geom$HEX_ID),
+      TIME_PERIOD = months_axis,
+      fill = list(TRIPS = if (fill_zero) 0 else NA_real_)
+    ) %>%
+    arrange(HEX_ID, TIME_PERIOD)
+
+  # Optional check
+  n_locs  <- dplyr::n_distinct(geom$HEX_ID)
+  n_times <- length(months_axis)
+  stopifnot(nrow(dense) == n_locs * n_times)
+
+  spacetime(
+    .data     = dense,
+    .geometry = geom,
+    .loc_col  = "HEX_ID",
+    .time_col = "TIME_PERIOD"
+  )
+}
+
+#Build the three cubes
+trips_st_am      <- make_st_cube(am2, hexagon2, months_set)
+trips_st_pm      <- make_st_cube(pm2, hexagon2, months_set)
+trips_st_weekend <- make_st_cube(wk2, hexagon2, months_set)
+
+#Verify
+is_spacetime_cube(trips_st_am)
+is_spacetime_cube(trips_st_pm)
+is_spacetime_cube(trips_st_weekend)
+
+```
+
+## **8.3 Computing Gi**
+
+### **8.3.1 Deriving the spatial weights Computing Gi**
+
+1.  **Purpose**\
+    Calculates local Getis-Ord Gi\* statistics to identify spatial hot and cold spots in trip data over time.
+
+2.  **Steps**
+
+    -   Create spatial neighbors using `st_contiguity()` and include each cell itself.\
+    -   Compute inverse-distance weights with `st_inverse_distance()`.\
+    -   Assign neighbors and weights via `set_nbs()` and `set_wts()`.\
+    -   Group by `TIME_PERIOD` and compute Gi\* using `local_gstar_perm()`.\
+    -   Expand results with `unnest()`.
+
+3.  **Applied To**
+
+    -   `trips_st_am` → `gi_stars_am`\
+    -   `trips_st_pm` → `gi_stars_pm`\
+    -   `trips_st_weekend` → `gi_stars_weekend`
+
+```{r}
+compute_gistar <- function(st_obj, value_col = TRIPS) {
+  st_obj %>%
+    activate("geometry") %>%
+    mutate(
+      nb = include_self(st_contiguity(geometry)),
+      wt = st_inverse_distance(nb, geometry, scale = 1, alpha = 1),
+      .before = 1
+    ) %>%
+    set_nbs("nb") %>%
+    set_wts("wt") %>%
+    group_by(TIME_PERIOD) %>%
+    mutate(gi_star = local_gstar_perm({{ value_col }}, nb, wt)) %>%
+    tidyr::unnest(gi_star)
+}
+
+# Plug-and-play for all three cubes
+gi_stars_am      <- compute_gistar(trips_st_am)       # weekday AM
+gi_stars_pm      <- compute_gistar(trips_st_pm)       # weekday PM
+gi_stars_weekend <- compute_gistar(trips_st_weekend)  # weekend/PH
+```
+
+## **8.4 Mann-Kendall Test**
+
+### **8.4.1 Mann-Kendall Test on Gi**
+
+-   **Data**:\
+    Extracted from the weekday AM peak Gi\* results (`gi_stars_am`) for hexagon ID `H0001`.
+
+-   **Purpose**:\
+    To observe temporal changes in spatial clustering strength (Gi\* values) at this location.
+
+-   **Plot**:
+
+    -   X-axis: `TIME_PERIOD` (monthly from July to September).\
+    -   Y-axis: `gi_star` (Getis-Ord Gi\* statistic).\
+    -   The line shows how clustering intensity evolves over time.
+
+```{r}
+cbg <- gi_stars_am %>% 
+  ungroup() %>% 
+  filter(HEX_ID == "H0001") |> 
+  select(HEX_ID, TIME_PERIOD, gi_star)
+```
+
+```{r}
+ggplot(data = cbg, 
+       aes(x = TIME_PERIOD, 
+           y = gi_star)) +
+  geom_line() +
+  theme_light()
+```
+
+Gi\* values are slightly negative, meaning this location tends toward a **cold spot** (lower trip activity relative to neighbors).\
+The Gi\* magnitude weakens (less negative) toward September, indicating reduced clustering of low trip counts.
+
+### **8.4.2 Printing Mann-Kendall test report**
+
+To determine if the spatial clustering strength (`gi_star`) for the hexagon is **increasing, decreasing, or stable** across time.
+
+Runs a \*\*Mann-Kendall test\*\* on \`gi_star\` for one hexagon to check if there’s a trend over time.
+
+It converts the test output into a tidy format with columns like:
+
+**tau**– trend direction
+
+**pvalue** – significance
+
+Result shows if clustering intensity is rising, falling, or stable.
+
+```{r}
+cbg %>%
+  summarise(mk = list(
+    unclass(
+      Kendall::MannKendall(gi_star)))) %>% 
+  tidyr::unnest_wider(mk)
+```
+
+### **8.4.3 Mann-Kendall test data.frame**
+
+This code performs a **Mann-Kendall trend test** for every hexagon (`HEX_ID`) to detect spatial trend changes in Gi\* values over time.
+
+```{r, warning=FALSE}
+ehsa_am <- gi_stars_am %>%
+  group_by(HEX_ID) %>%
+  summarise(mk = list(
+    unclass(
+      Kendall::MannKendall(gi_star)))) %>%
+  tidyr::unnest_wider(mk)
+head(ehsa_am)
+
+```
+
+```{r, warning=FALSE}
+ehsa_pm <- gi_stars_pm %>%
+  group_by(HEX_ID) %>%
+  summarise(mk = list(
+    unclass(
+      Kendall::MannKendall(gi_star)))) %>%
+  tidyr::unnest_wider(mk)
+head(ehsa_pm)
+
+```
+
+```{r, warning=FALSE}
+ehsa_weekend <- gi_stars_weekend %>%
+  group_by(HEX_ID) %>%
+  summarise(mk = list(
+    unclass(
+      Kendall::MannKendall(gi_star)))) %>%
+  tidyr::unnest_wider(mk)
+head(ehsa_weekend)
+
+```
+
+## **8.5 Performing Emerging Hotspot Analysis**
+
+This code performs **Emerging Hot Spot Analysis (EHSA)** on the three spatiotemporal datasets (AM, PM, Weekend/PH).
+
+Each dataset now shows how the clustering of trip intensity evolves over space and time.
+
+```{r}
+# --- Weekday AM ---
+ehsa_am <- emerging_hotspot_analysis(
+  x = trips_st_am,
+  .var = "TRIPS",
+  k = 1,
+  nsim = 99
+)
+head(ehsa_am)
+```
+
+```{r}
+# --- Weekday PM ---
+ehsa_pm <- emerging_hotspot_analysis(
+  x = trips_st_pm,
+  .var = "TRIPS",
+  k = 1,
+  nsim = 99
+)
+head(ehsa_pm)
+```
+
+```{r}
+# --- Weekend / Public Holiday ---
+ehsa_weekend <- emerging_hotspot_analysis(
+  x = trips_st_weekend,
+  .var = "TRIPS",
+  k = 1,
+  nsim = 99
+)
+head(ehsa_weekend)
+```
+
+### 8.5.1 Emerging trends
+
+The bar charts display the **distribution of hotspot classifications** from the Emerging Hot Spot Analysis (EHSA) across different time periods — **Weekday AM**, **Weekday PM**, and **Weekend/Public Holiday**.
+
+```{r}
+ggplot(data = ehsa_am, aes(x = classification)) +
+  geom_bar(fill = "grey40") +
+  coord_flip() +  # flip coordinates
+  theme_light()
+```
+
+```{r}
+ggplot(data = ehsa_pm, aes(x = classification)) +
+  geom_bar(fill = "grey40") +
+  coord_flip() +  # flip coordinates
+  theme_light()
+
+```
+
+```{r}
+ggplot(data = ehsa_weekend, aes(x = classification)) +
+  geom_bar(fill = "grey40") +
+  coord_flip() +  # flip coordinates
+  theme_light()
+```
+
+The majority of hexagons fall under *no pattern detected*, indicating most areas show stable bus trip activity across months without significant spatial change.
+
+**Cold Spots \> Hot Spots**
+
+-   *Persistent* and *consecutive cold spots* appear more frequently than their hotspot counterparts.
+-   Suggests consistent or recurring areas of **low trip intensity**, possibly residential or less connected zones.
+
+**Similar Trend Across All Time Periods** - AM, PM, and weekend patterns show similar distributions — stable patterns dominate with few evolving clusters.
+
+Travel demand remains largely **stable** across both time and space. While some zones consistently experience low trip volumes, the data shows **limited emergence or decline** of significant hotspot regions.
+
+### **8.5.2 Visualising EHSA**
+
+1.  **Join EHSA results to hexagon geometry**
+    -   For each time period (Weekday AM, Weekday PM, Weekend/Public Holiday), the `left_join()` merges:
+        -   `hexagon`: spatial geometry (map grid)
+        -   `ehsa_*`: EHSA classification results (`location`, `classification`, etc.)
+    -   The join is done using the hexagon ID (`HEX_ID`) matched to the EHSA `location`.
+2.  **Result**
+    -   Each resulting object (`singapore_ehsa_am`, `singapore_ehsa_pm`, `singapore_ehsa_weekend`) is a **spatial dataset** containing:
+        -   Geometry for mapping
+        -   EHSA classification info (e.g., “persistent hotspot”, “coldspot”)
+        -   Additional EHSA metrics
+3.  **Preview**
+    -   `head()` is used to inspect the first few rows, ensuring the join worked correctly and the data structure is as expected.
+
+```{r}
+# --- Weekday AM ---
+singapore_ehsa_am <- hexagon %>%
+  left_join(ehsa_am, by = join_by(HEX_ID == location))
+
+# --- Weekday PM ---
+singapore_ehsa_pm <- hexagon %>%
+  left_join(ehsa_pm, by = join_by(HEX_ID == location))
+
+# --- Weekend / Public Holiday ---
+singapore_ehsa_weekend <- hexagon %>%
+  left_join(ehsa_weekend, by = join_by(HEX_ID == location))
+
+# Quick preview of each
+head(singapore_ehsa_am)
+head(singapore_ehsa_pm)
+head(singapore_ehsa_weekend)
+```
+
+**Filtering for Significant Hotspots**
+
+-   Next we filter each EHSA spatial dataset (`singapore_ehsa_am`, `singapore_ehsa_pm`, `singapore_ehsa_weekend`) to keep only areas with a **p-value \< 0.05**, meaning statistically significant emerging hotspot or coldspot trends. This is done using the `filter(p_value < 0.05)` condition for each dataset.
+
+```{r}
+# Filter significant hotspots for each (p < 0.05)
+ehsa_sig_am <- singapore_ehsa_am %>% filter(p_value < 0.05)
+ehsa_sig_pm <- singapore_ehsa_pm %>% filter(p_value < 0.05)
+ehsa_sig_weekend <- singapore_ehsa_weekend %>% filter(p_value < 0.05)
+
+
+# Print them directly
+ehsa_sig_am
+ehsa_sig_pm
+ehsa_sig_weekend
+```
+
+2.  **Result**
+    -   The output shows **“Simple feature collection with 0 features”**, meaning **no locations** met the significance threshold.
+    -   All three datasets (AM, PM, Weekend) are empty — no statistically significant emerging hotspot or coldspot patterns were detected.
+3.  **Why Visualization Isn’t Possible**
+    -   Since there are **no significant features**, there is **nothing to plot** on the map.
+    -   Visualizing would yield a blank map, as the EHSA did not detect any areas with meaningful spatiotemporal trend changes (p \< 0.05).
+
+### Explanation
+
+The Emerging Hot Spot Analysis (EHSA) relies on detecting **spatiotemporal trends** — patterns of increase or decrease in hotspot activity **over time**.
+
+In this case, the dataset includes only **three months (July–September)** of bus trip data.\
+This short period provides **too few time steps** for the EHSA to detect statistically significant temporal trends.
+
+Because of that: - The **Mann-Kendall test** used in EHSA cannot establish a meaningful upward or downward trend.\
+- The **p-values remain above 0.05**, resulting in no significant hotspots or coldspots.\
+- Consequently, **visualization isn’t possible**, as there are **no detected emerging patterns** to map.
+
+In short, **three months of data is insufficient** for temporal hotspot detection — EHSA works best with **at least 12–24 time periods** (e.g., monthly data over one or two years).
