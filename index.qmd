@@ -4,4 +4,4 @@ title: "ISS626"
 
 This is Mohammad Farhan Ahsan's Quarto website.
 
-To learn more about Quarto websites visit <https://quarto.org/docs/websites>.
+-   To learn more about Quarto websites visit <https://quarto.org/docs/websites>.
