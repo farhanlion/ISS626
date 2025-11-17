@@ -1,0 +1,1001 @@
+---
+title: "Take Home Excercise 3"
+author: "Mohammad Farhan Ahsan"
+date: "16/11/25"
+date-modified: "last-modified"
+format: html
+execute: 
+  echo: true
+  eval: true
+  warning: false
+  freeze: true
+  cache: false
+---
+
+## **Installing and Loading R packages**
+
+```{r}
+pacman::p_load(httr, tidyverse, sf, tmap, 
+               jsonlite, progress, gtsummary, performance, RColorBrewer, sfdep, GWmodel)
+```
+
+## **Geocoding HDB resale data**
+
+### **Selecting data of interest**
+
+We will filter out 3 room, 4 room and 5 room flats
+
+```{r}
+HDBresale <- read_csv(
+  "data/rawdata/HDBresale.csv") %>%
+  filter(flat_type == "5 ROOM") %>%
+  filter(month >= "2025-01" & month < "2025-09")
+```
+
+```{r}
+HDBresale2 <- read_csv(
+  "data/rawdata/HDBresale.csv")
+
+
+```
+
+We will create a function that helps us convert the address into latitude and longitude using OneMapSG api.
+
+```{r}
+geocode <- function(block, streetname) {
+  base_url <- "https://onemap.gov.sg/api/common/elastic/search"
+  address <- paste(block, streetname, sep = " ")
+  query <- list("searchVal" = address, 
+                "returnGeom" = "Y",
+                "getAddrDetails" = "N",
+                "pageNum" = "1")
+  
+  res <- GET(base_url, query = query)
+  restext<-content(res, as="text")
+  
+  output <- fromJSON(restext)  %>% 
+    as.data.frame %>%
+    select(results.LATITUDE, results.LONGITUDE)
+
+  return(output)
+}
+```
+
+Now we will use that function
+
+```{r}
+
+#| code-summary: Get latitude and longitude of HDB flats
+#| output: false
+#| warning: false
+#| error: false
+#| message: false
+
+HDBresale$LATITUDE <- 0
+HDBresale$LONGITUDE <- 0
+
+for (i in 1:nrow(HDBresale)){
+  temp_output <- geocode(HDBresale[i, 4], HDBresale[i, 5])
+  
+  HDBresale$LATITUDE[i] <- temp_output$results.LATITUDE
+  HDBresale$LONGITUDE[i] <- temp_output$results.LONGITUDE
+}
+```
+
+```{r}
+HDBresale %>% head()
+```
+
+We have the columns Latitude and Longitude.
+
+## **Proximity Analysis**
+
+Count number of geographic entities located within a defined distance of each HDB
+
+Let's count the number of preschools located within 350m of each resale HDB
+
+Convert hdb resale to sf
+
+```{r}
+HDBresale_sf <- HDBresale %>%
+  st_as_sf(
+    coords = c("LONGITUDE", "LATITUDE"),
+    crs=4326) %>%
+  st_transform(crs = 3414)
+```
+
+Import preschool data
+
+```{r}
+preschool = st_read(
+  "data/geospatial/PreSchoolsLocation.kml") %>%
+  st_transform(crs= 3414)
+
+CHASclinic = st_read(
+  "data/geospatial/CHASClinics.geojson") %>%
+  st_transform(crs= 3414)
+
+childCareServices = st_read(
+  "data/geospatial/ChildCareServices.geojson") %>%
+  st_transform(crs= 3414)
+
+hawkerCenters = st_read(
+  "data/geospatial/HawkerCentres.geojson") %>%
+  st_transform(crs= 3414)
+
+parks = st_read(
+  "data/geospatial/Parks.geojson") %>%
+  st_transform(crs= 3414)
+
+supermarkets = st_read(
+  "data/geospatial/Supermarkets.geojson") %>%
+  st_transform(crs= 3414)
+
+eldercare <- st_read(
+  dsn = "data/geospatial", 
+  layer = "ELDERCARE"
+) %>% 
+  st_transform(crs = 3414)
+
+
+trainstations = st_read(
+  "data/geospatial/LTAMRTStationExitKML.kml") %>%
+  st_transform(crs= 3414)
+
+```
+
+### **Counting number of preschools**
+
+```{r}
+within_350m <- st_is_within_distance(
+  HDBresale_sf, preschool, dist = 350)
+
+HDBresale_sf <- HDBresale_sf %>%
+  mutate(WITHIN_350M_PRISCHOOL = map_int(within_350m, length))
+```
+
+### **Computing shortest distance**
+
+```{r}
+nearest_dist <- function(from_geom, to_sf) {
+  as.numeric(
+    st_distance(
+      from_geom,
+      to_sf[st_nearest_feature(from_geom, to_sf), ],
+      by_element = TRUE
+    )
+  )
+}
+
+HDBresale_sf <- HDBresale_sf %>%
+  mutate(
+    PROX_PRESCHOOL     = nearest_dist(geometry, preschool),
+    PROX_CHASCLINIC    = nearest_dist(geometry, CHASclinic),
+    PROX_CHILDCARE     = nearest_dist(geometry, childCareServices),
+    PROX_HAWKER        = nearest_dist(geometry, hawkerCenters),
+    PROX_PARK          = nearest_dist(geometry, parks),
+    PROX_SUPERMARKET   = nearest_dist(geometry, supermarkets),
+    PROX_ELDERCARE     = nearest_dist(geometry, eldercare),
+    PROX_TRAINSTATION  = nearest_dist(geometry, trainstations)
+  )
+
+```
+
+```{r}
+HDBresale_sf
+```
+
+## **1 Geospatial Data Wrangling**
+
+### **1.1 Importing geospatial data**
+
+```{r}
+mpsz = st_read(dsn = "data/geospatial", 
+               layer = "MP14_SUBZONE_WEB_PL")
+```
+
+### **1.2 Updating CRS information**
+
+```{r}
+mpsz_svy21 <- st_transform(mpsz, 3414)
+```
+
+```{r}
+st_crs(mpsz_svy21)
+```
+
+EPSG: is indicated as *3414* now.
+
+```{r}
+st_bbox(mpsz_svy21)
+```
+
+We will calculate the Age of a flat
+
+```{r}
+library(stringr)
+library(dplyr)
+
+HDBresale_sf <- HDBresale_sf %>%
+  mutate(
+    # Extract years and months  
+    lease_years  = as.numeric(str_extract(remaining_lease, "\\d+(?= years?)")),
+    lease_months = as.numeric(str_extract(remaining_lease, "\\d+(?= months?)")),
+    lease_months = ifelse(is.na(lease_months), 0, lease_months),
+    
+    # Convert to years
+    remaining_lease_num = lease_years + lease_months / 12,
+    
+    # Compute AGE
+    AGE = 99 - remaining_lease_num
+  )
+
+```
+
+We will add a column called STOREY_MID to convert the floor to numeric
+
+```{r}
+HDBresale_sf <- HDBresale_sf %>%
+  mutate(
+    storey_low  = as.numeric(str_extract(storey_range, "^\\d+")),
+    storey_high = as.numeric(str_extract(storey_range, "\\d+$")),
+    STOREY_MID  = (storey_low + storey_high) / 2
+  )
+```
+
+## **2 Exploratory Data Analysis (EDA)**
+
+### **2.1 EDA using statistical graphics**
+
+We will plot a histogram of the resale price
+
+```{r}
+ggplot(data=HDBresale_sf, 
+       aes(x=`resale_price`)) +
+  geom_histogram(bins=20, 
+                 color="black", 
+                 fill="light blue")
+```
+
+Right skewed meaning more hdb flats were transacted at lower relative prices.
+
+Normalize the resale price using a new variable called *log_resale_price* by using a log transformation on the variable resale_price It is performed using `mutate()` of **dplyr** package.
+
+```{r}
+HDBresale_sf <- HDBresale_sf %>%
+  mutate(`log_resale_price` = log(resale_price))
+```
+
+```{r}
+ggplot(data=HDBresale_sf, 
+       aes(x=`log_resale_price`)) +
+  geom_histogram(bins=20, 
+                 color="black", 
+                 fill="light blue")
+```
+
+distribution is relatively less skewed after the transformation.
+
+### **2.2 Multiple Histogram Plots distribution of variables**
+
+```{r}
+
+library(purrr)
+
+vars <- c("PROX_PRESCHOOL",
+          "PROX_CHASCLINIC",
+          "PROX_CHILDCARE",
+          "PROX_HAWKER",
+          "PROX_PARK",
+          "PROX_SUPERMARKET",
+          "PROX_ELDERCARE",
+          "PROX_TRAINSTATION")
+library(ggplot2)
+library(purrr)
+library(ggpubr)
+
+plot_list <- map(vars, ~ {
+  ggplot(HDBresale_sf, aes(x = .data[[.x]])) +
+    geom_histogram(bins = 20, color = "black", fill = "lightblue") +
+    labs(title = .x, x = .x, y = "Count")
+})
+
+ggarrange(plotlist = plot_list, 
+          ncol = 3, 
+          nrow = 3)
+
+
+```
+
+The histograms reveal a consistent **right-skewed distribution** across all proximity variables. This is typical for distance-based features in Singapore’s dense urban environment, where many units are close to amenities while fewer units lie far away. Below is a variable-by-variable interpretation.
+
+### **2.3 Drawing Statistical Point Map**
+
+We will plot the prices of HDB flats around singapore
+
+```{r}
+tmap_mode("plot")
+```
+
+```{r}
+tm_shape(mpsz_svy21)+
+  tm_polygons() +
+tm_shape(HDBresale_sf) +  
+  tm_dots(fill = "resale_price",
+          fill_alpha = 0.6,
+          size = 0.5,
+          fill.scale = tm_scale_intervals(
+            style="quantile")) +
+  tm_view(set_zoom_limits = c(11,14))
+```
+
+```{r}
+tmap_mode("plot")
+```
+
+As we can see flats in the central region and the eastcoast region tend to be more expensive. Flats in the north and west are much more affordable.
+
+### **2.4 Summary statistics of key variables**
+
+To further explore the relationships between HDB resale prices and key structural and locational attributes, we generated a series of scatterplots comparing **log-transformed resale prices** against each predictor variable. Using `geom_point()` for individual transactions and `geom_smooth()` to fit a LOESS trend line, we visualised the potential functional form, monotonicity, and non-linearity between price and each independent variable. The variables examined included structural characteristics (floor area, flat age, and storey height) as well as proximity-based measures of accessibility and amenities (distance to MRT stations, hawker centres, parks, supermarkets, and eldercare facilities). These scatterplots provide an intuitive, visual first pass for assessing model suitability, identifying outliers, and detecting non-linear patterns prior to regression modelling.
+
+```{r}
+vars_for_scatter <- c(
+"floor_area_sqm", "STOREY_MID",
+"PROX_TRAINSTATION", "PROX_HAWKER",
+"PROX_PARK", "PROX_SUPERMARKET",
+"PROX_ELDERCARE", "PROX_TRAINSTATION"
+)
+
+plot_list2 <- map(vars_for_scatter, ~ {
+ggplot(HDBresale_sf,
+aes(x = .data[[.x]], y = log_resale_price)) +
+geom_point(alpha = 0.3, size = 0.5) +
+geom_smooth(se = FALSE) +
+labs(title = paste("log(price) vs", .x),
+x = .x, y = "log(resale_price)")
+})
+
+ggpubr::ggarrange(plotlist = plot_list2,
+ncol = 3, nrow = 3)
+
+
+```
+
+The scatterplots reveal several important behavioural patterns. Floor area shows a strong positive association with resale price, though with diminishing marginal returns, while AGE displays a non-linear relationship—prices fall sharply as flats age but flatten out for very old units. Higher STOREY_MID levels correspond clearly to higher prices, reflecting the common preference for high-floor units. Most proximity variables show a **negative slope**: prices tend to be higher when flats are **closer** to amenities such as MRT stations, hawker centres, parks, supermarkets, and eldercare facilities. These relationships are generally smooth but exhibit varying degrees of curvature, suggesting that linear OLS models may not fully capture spatially varying effects. Combined, the patterns support the use of a hedonic pricing model and, given visible non-linearity and spatial clustering, motivate the need for geographically weighted modelling to better account for local variation in price drivers.
+
+#### 2.4.2 Spatial Variation in HDB Resale Prices Across Planning Areas
+
+We spatially joined each HDB resale transaction to Singapore’s planning areas using `st_join()` with point-in-polygon matching based on the Master Plan subzone boundaries. Planning area names were added to each transaction, and areas with fewer than 20 sales were excluded to ensure reliable comparisons. A horizontal boxplot was then constructed to visualise the distribution of *log-transformed* resale prices within each planning area. The boxplots summarise the central tendency, dispersion, and extreme values of local resale markets, providing a clear visual profile of how pricing varies across the island.
+
+```{r}
+HDBresale_sf_pa <- st_join(
+HDBresale_sf,
+mpsz_svy21 %>% select(SUBZONE_N, PLN_AREA_N),
+join = st_within,
+left = TRUE
+)
+
+HDBresale_sf_pa %>%
+st_drop_geometry() %>%
+count(PLN_AREA_N, sort = TRUE) %>%
+head()
+
+
+HDBresale_sf_pa %>%
+st_drop_geometry() %>%
+filter(!is.na(PLN_AREA_N)) %>%
+group_by(PLN_AREA_N) %>%
+filter(n() >= 20) %>%    # keep only areas with at least 20 sales
+ungroup() %>%
+ggplot(aes(x = reorder(PLN_AREA_N, log_resale_price, median),
+y = log_resale_price)) +
+geom_boxplot(outlier.alpha = 0.3) +
+coord_flip() +
+labs(x = "Planning Area",
+y = "log(resale_price)",
+title = "Distribution of log(HDB resale prices) by Planning Area")
+
+```
+
+The boxplot reveals strong spatial heterogeneity in resale prices. Mature, centrally located areas such as **Queenstown, Bukit Merah, Toa Payoh, Bishan, and Kallang** exhibit both higher median prices and more compact distributions, reflecting stable demand and consistent housing characteristics. In contrast, peripheral towns such as **Woodlands, Choa Chu Kang, Sembawang, and Jurong West** show lower medians and wider spreads, indicative of more varied housing stock and weaker price pressures. The distinct gap between central and suburban regions highlights the influence of location, accessibility, and neighbourhood maturity on resale prices, reinforcing the need for geographically weighted methods to model these spatially varying relationships.
+
+#### 2.4.3 Spatial Pattern of Mean HDB Resale Prices by Planning Area
+
+Each polygon represents a planning area, shaded by the *mean log(resale price)* of 5-room HDB transactions within that area. Transactions were first spatially joined to planning areas, then the mean price and mean log(price) were computed per area. These summary statistics were merged back to the planning area layer and mapped using a quantile-based “Blues” colour scale, so darker shades correspond to higher average resale prices and lighter shades to lower ones. Areas with no 5-room resale transactions in the study period are shown in grey as “Missing”.
+
+```{r}
+# Compute mean price per planning area
+
+price_pa <- HDBresale_sf_pa %>%
+st_drop_geometry() %>%
+filter(!is.na(PLN_AREA_N)) %>%
+group_by(PLN_AREA_N) %>%
+summarise(
+mean_price = mean(resale_price, na.rm = TRUE),
+mean_log_price = mean(log_resale_price, na.rm = TRUE),
+n = n()
+)
+
+# Join back to planning area polygons
+
+mpsz_price <- mpsz_svy21 %>%
+left_join(price_pa, by = c("PLN_AREA_N"))
+
+tmap_mode("plot")
+
+tm_shape(mpsz_price) +
+tm_polygons(
+col = "mean_log_price",
+style = "quantile",
+n = 5,
+palette = "Blues",
+title = "Mean log(price)"
+) +
+tm_layout(
+main.title = "Mean HDB Resale Prices by Planning Area",
+legend.outside = TRUE
+)
+
+```
+
+The map shows a clear **central-to-peripheral price gradient**. Planning areas in the central and city-fringe region—such as Queenstown, Bukit Merah, Kallang/Whampoa, Toa Payoh and Bishan—form a dark-blue core with the highest mean resale prices, reflecting strong accessibility, mature amenities and established demand. Surrounding towns in the east and north-east (e.g. Tampines, Pasir Ris, Sengkang, Punggol) exhibit intermediate values, while outer western and northern areas (e.g. Jurong West, Choa Chu Kang, Woodlands, Sembawang) are generally lighter, indicating lower average prices. This broad spatial pattern supports the hypothesis that **location at the planning-area scale is a major determinant of resale value**, and it motivates the use of geographically weighted models to capture finer local variations within and across these areas.
+
+#### 2.4.4 Spatial Distribution of Flat Age and MRT Accessibility
+
+Two geospatial dot maps were created to examine the spatial variation of two key structural and locational predictors: **flat age (AGE)** and **distance to the nearest MRT station (PROX_TRAINSTATION)**. Each resale transaction is plotted as a point overlaid on the Master Plan planning area boundaries. Points are coloured using quantile-based palettes (“YlOrRd” for AGE and “GnBu” for MRT proximity) to emphasise relative differences across the island. The first map shows how the age of flats varies spatially, while the second illustrates how close units are to MRT stations. This side-by-side arrangement allows direct visual comparison of structural ageing patterns and transport accessibility across Singapore.
+
+```{r}
+tmap_mode("plot")
+
+AGE_map <- tm_shape(mpsz_svy21) +
+tm_polygons(alpha = 0.1) +
+tm_shape(HDBresale_sf) +
+tm_dots(
+col = "AGE",
+palette = "YlOrRd",
+style = "quantile",
+size = 0.5,
+title = "Age (years)"
+) +
+tm_layout(main.title = "Spatial Distribution of Flat Age")
+
+MRTprox_map <- tm_shape(mpsz_svy21) +
+tm_polygons(alpha = 0.1) +
+tm_shape(HDBresale_sf) +
+tm_dots(
+col = "PROX_TRAINSTATION",
+palette = "GnBu",
+style = "quantile",
+size = 0.5,
+title = "Distance to MRT (m)"
+) +
+tm_layout(main.title = "Distance to Nearest MRT Station")
+
+tmap_arrange(AGE_map, MRTprox_map,
+ncol = 2, asp = 1, sync = TRUE)
+
+```
+
+The spatial distribution of flat age shows that **older HDB flats are heavily concentrated in the central and mature estates**, such as Queenstown, Bukit Merah, Toa Payoh, and Ang Mo Kio. These areas were developed earlier, so many units exceed 30–40 years in age. In contrast, **newer flats—generally under 15 years old—are clustered in newer towns** such as Punggol, Sengkang, and parts of Jurong and Tampines. This reflects Singapore’s phased town development and the decentralisation strategy in recent decades.
+
+The MRT proximity map reveals a different spatial pattern. **Flats closer to MRT stations** (light green shades) are mostly found in the **central, north-east, and eastern regions**, where the rail network is densest. Areas with **greater distances to MRT stations** (darker blue) typically lie in the outskirts—such as parts of Woodlands, Choa Chu Kang, and northern Yishun—where station spacing is wider. Notably, even within the same town, accessibility varies, creating micro-pockets of highly accessible versus more isolated blocks.
+
+Taken together, these maps highlight two key insights:
+
+1.  **Age and accessibility vary independently across space.** Older flats are not necessarily further from MRT stations, and newer neighbourhoods may still have inconsistent rail coverage.
+
+2.  These spatial disparities likely contribute to **systematic variation in resale prices across different regions**, reinforcing the need for spatial controls when modelling housing values.
+
+#### 2.4.5 Effect of MRT Distance on HDB Resale Prices
+
+The scatterplot visualises the relationship between **log(resale price)** and the **log of distance to the nearest MRT station**, with each point representing an HDB resale transaction. The fitted smooth curve highlights the overall trend across the data. By applying logarithmic transformations to both variables, the plot reduces skewness from long-distance outliers and clarifies any underlying non-linear patterns.
+
+```{r}
+HDBresale_sf <- HDBresale_sf %>%
+mutate(
+log_PROX_TRAIN = log(PROX_TRAINSTATION + 1),
+log_PROX_HAWKER = log(PROX_HAWKER + 1)
+)
+
+ggplot(HDBresale_sf,
+aes(x = log_PROX_TRAIN, y = log_resale_price)) +
+geom_point(alpha = 0.3, size = 0.5) +
+geom_smooth(se = FALSE) +
+labs(
+title = "log(price) vs log(distance to MRT)",
+x = "log(distance to MRT + 1)",
+y = "log(resale_price)"
+)
+
+```
+
+Interestingly, the trend is **relatively flat**, suggesting that after log-transformation, **distance to MRT alone has only a weak marginal effect on resale prices**. The smoothed line dips slightly around log(distance) ≈ 6 (roughly 400–500 m), where prices appear marginally lower, but rises again at larger distances—indicating no consistent monotonic relationship. This pattern suggests that MRT proximity in isolation does not strongly predict price, likely because (i) many towns have multiple accessibility alternatives (e.g., buses), (ii) other factors such as flat age, floor area, and planning area dominate pricing, and (iii) distance effects may vary spatially (e.g., central vs. suburban contexts). This flat trend reinforces the need for **multivariate modelling and spatial controls** to properly capture MRT effects.
+
+## **3 Hedonic Pricing Modelling in R**
+
+building hedonic pricing models for HDB units using lm() of R base
+
+### **3.1 Simple Linear Regression Method**
+
+First, we will build a simple linear regression model by using *resale_price* as the dependent variable and *floor_area_sqm* as the independent variable.
+
+```{r}
+HDBslr <- lm(formula=resale_price ~ floor_area_sqm,
+             data = HDBresale_sf)
+```
+
+`lm()` returns an object of class “lm” or for multiple responses of class c(“mlm”, “lm”).
+
+The functions `summary()` and `anova()` can be used to obtain and print a summary and analysis of variance table of the results. The generic accessor functions coefficients, effects, fitted.values and residuals extract various useful features of the value returned by `lm`.
+
+```{r}
+summary(HDBslr)
+```
+
+The output report reveals that the SELLING_PRICE for 4 room flats cannot be explained by using the formula:
+
+```         
+      *y = 799589.3 - 191.9(x)*
+```
+
+The R-squared of 0.2987 reveals that the simple regression model built is able to explain about 29% of the resale prices.
+
+Since **p \> 0.05**, the effect of floor area is **not significant.** We **fail to reject** the null hypothesis that the slope is 0. There is **no evidence** that floor area alone predicts resale price in this dataset.
+
+This is expected because resale price is influenced by **storey**, **location**, **flat type**, **remaining lease**, **age**, etc. Floor area alone is too weak when comparing all 4 room flats.
+
+Model fit
+
+-   R-squared: **0.000067**
+
+-    Adjusted R-squared: **≈ 0**
+
+This means the model explains **only 0.0067%** of the variation in resale prices—essentially **zero**. It has no predictive power
+
+```{r}
+ggplot(data=HDBresale_sf,  
+       aes(x=`floor_area_sqm`, y=`resale_price`)) +
+  geom_point() +
+  geom_smooth(method = lm)
+```
+
+A non-significant slope with an R-squared near zero means **changes in floor area do not systematically affect resale prices** when considered alone.
+
+The simple linear regression model
+
+resale price∼floor area
+
+does **not** significantly explain resale prices. The slope is not statistically different from zero, the R-squared is effectively zero, and the model fails the overall significance test. This shows floor area alone is **not sufficient** to explain resale prices in Singapore—other factors like flat age, location, storey height, and amenity proximity must be included.
+
+### **3.2 Multiple Linear Regression Method**
+
+#### 3.2.1 Visualising the relationships of the independent variables
+
+Before building a muulti linear regression model, we need to plot a correlation matrix to ensure none of the x variables are highly correlated.
+
+Correlation Matrix
+
+```{r}
+library(corrplot)
+
+num_vars <- HDBresale_sf %>%
+  st_drop_geometry() %>%
+  select(
+    floor_area_sqm, AGE, STOREY_MID,
+    starts_with("PROX"), 
+    log_resale_price
+  )
+
+corr_matrix <- cor(num_vars, use = "complete.obs")
+
+corrplot(corr_matrix,diag = FALSE, 
+         order = "AOE",
+         tl.pos = "td", 
+         tl.cex = 0.5, 
+         method = "number", 
+         type = "upper")
+
+```
+
+Prox preschoon and prox child care can be removed as they arerepeating and pracrically the same thing. Hence we will only keep prox preschool
+
+### **3.3 Building a hedonic pricing model using multiple linear regression method**
+
+```{r}
+HDBmlr <- lm(
+  formula = resale_price ~ floor_area_sqm + AGE  + PROX_ELDERCARE +
+    PROX_HAWKER + PROX_PARK +
+    PROX_SUPERMARKET + 
+    STOREY_MID + PROX_PRESCHOOL +
+    PROX_TRAINSTATION + PROX_CHASCLINIC,
+  data=HDBresale_sf)
+summary(HDBmlr)
+```
+
+The model achieves an **R-squared of 0.465**, indicating that approximately **46.5% of the variation in resale prices** is explained by the included predictors. This is a substantial improvement over the earlier simple regression and is expected because housing prices are influenced by many spatial and structural factors simultaneously.
+
+The **overall F-test is highly significant (p \< 2.2e-16)**, meaning the model as a whole provides strong explanatory power beyond the intercept-only model.
+
+Key insight:
+
+Floor area was not significant in the simple regression because several important variables—such as flat age, storey level, and locational attributes—were omitted, causing omitted variable bias. Many of these factors are correlated with floor area (e.g., older flats tend to be larger but cheaper; central flats tend to be smaller but more expensive), which suppressed the apparent effect of size on resale price.\
+
+After controlling for these confounders in the multiple regression, the true positive relationship between floor area and resale price becomes clear and highly significant.
+
+### **3.4 Revising the model**
+
+Let's remove PROX_SUPERMARKET (p = 0.058) \> 0.05. since it is not statistically significant.
+
+```{r}
+HDBmlr1 <- lm(
+  formula = resale_price ~ floor_area_sqm + AGE  + PROX_ELDERCARE +
+    PROX_HAWKER + PROX_PARK + 
+    STOREY_MID + PROX_PRESCHOOL +
+    PROX_TRAINSTATION + PROX_CHASCLINIC,
+  data=HDBresale_sf)
+summary(HDBmlr1)
+```
+
+After removing the statistically insignificant predictor PROX_SUPERMARKET, the updated model continues to perform strongly, with an R² = 0.4647 and Adjusted R² = 0.4636. This means the refined model explains 46.4% of the variation in resale prices — almost identical to the earlier model — confirming that PROX_SUPERMARKET contributed little explanatory power.
+
+The overall F-test remains highly significant (p \< 2.2e-16), indicating the model as a whole reliably explains resale prices.
+
+### **3.5 Preparing Publication Quality Table: gtsummary method**
+
+```{r}
+tbl_regression(HDBmlr1, intercept = TRUE)
+```
+
+```{r}
+tbl_regression(HDBmlr1, 
+               intercept = TRUE) %>% 
+  add_glance_source_note(
+    label = list(sigma ~ "\U03C3"),
+    include = c(r.squared, adj.r.squared, 
+                AIC, statistic,
+                p.value, sigma))
+```
+
+### **3.6 Regression Diagnostics**
+
+#### 3.6.1 Multicollinearity test
+
+```{r}
+check_collinearity(HDBmlr1)
+```
+
+The model has no multicollinearity problems.
+
+```{r}
+mlr.vif <- check_collinearity(HDBmlr1)
+plot(mlr.vif)
+```
+
+Since the VIF of the independent variables are less than 10. We can safely conclude that there are no sign of multicollinearity among the independent variables.
+
+#### 3.6.2 Test for Non-Linearity
+
+```{r}
+check_model(HDBmlr1,
+            check = "linearity")
+```
+
+The figure above reveals that most of the data poitns are scattered around the 0 line, hence we can safely conclude that the relationships between the dependent variable and independent variables are linear.
+
+#### 3.6.3 Test for Normality Assumption
+
+```{r}
+check_normality(HDBmlr1)
+```
+
+Residuals Are Not Normally Distributed
+
+The print above reveals that the p-value of the normality assumption test is less than alpha value of 0.05. Hence we reject the normality assumption at 95% confident level.
+
+```{r}
+plot(check_normality(HDBmlr1), 
+     type = "qq")
+```
+
+Q-Q plot above below shows that majority of the data points are felt along the zero line.
+
+```{r}
+check_model(HDBmlr1,
+            check= "normality")
+```
+
+The figure reveals that the residual of the multiple linear regression model (i.e. HDBmlr1) is resemble normal distribution
+
+#### 3.6.4 Testing for Spatial Autocorrelation
+
+```{r}
+mlr.output <- as.data.frame(HDBmlr1$residuals)
+```
+
+```{r}
+HDBresale_sf <- cbind(HDBresale_sf, 
+                        HDBmlr1$residuals) %>%
+rename(`MLR_RES` = `HDBmlr1.residuals`)
+```
+
+```{r}
+tmap_mode("plot")
+```
+
+```{r}
+tm_shape(mpsz_svy21) +
+  tm_polygons(fill_alpha = 0.4) +
+tm_shape(HDBresale_sf) +  
+  tm_dots(
+    fill = "MLR_RES",
+    size = 0.7,
+    col = "black",
+    fill.scale = tm_scale(
+      n = 10,
+      values = rev(
+        brewer.pal(11, "RdBu")),
+      style = "quantile",
+      midpoint = NA),
+    fill.legend = tm_legend(title = "Residuals")
+  ) + 
+  tm_title("LM Residuals (Quantile Classification)") +
+  tm_layout(legend.outside = TRUE) +
+  tm_view(set_zoom_limits = c(11,14))
+```
+
+```{r}
+tmap_mode("plot")
+```
+
+The clear clustering of high and low residual values across neighbourhoods suggests **spatial autocorrelation**.
+
+To prove that our observation is indeed true, Global Moran’s I test will be performed
+
+First, we will compute the distance-based weight matrix by using [`st_dist_band()`](https://sfdep.josiahparry.com/reference/st_dist_band) function of **sfdep**.
+
+```{r}
+HDBresale_sf <- HDBresale_sf %>% 
+  mutate(
+    nb = st_dist_band(
+      st_geometry(geometry), 
+                 upper = 1500),
+    wt = st_weights(
+      nb, style = "W"),
+    .before = 1) 
+```
+
+```{r}
+set.seed(1234)
+global_moran_perm(
+  HDBresale_sf$MLR_RES, 
+  nb = HDBresale_sf$nb, 
+  wt = HDBresale_sf$wt,
+  alternative = "two.sided", 
+  nsim = 499)
+```
+
+The Global Moran’s I test confirms that the residuals from the multiple linear regression model exhibit significant spatial autocorrelation (Moran’s I = 0.5065, p \< 2.2e-16). This indicates that residuals are spatially clustered rather than randomly distributed. Therefore, the model violates the assumption of spatial independence, suggesting that important spatial processes remain unaccounted for. A more appropriate spatial regression model—such as a Geographically Weighted Regression (GWR)—should be considered.
+
+## **4 Building Hedonic Pricing Models using GWRmodel**
+
+We are now going to use a geographically weighted regression model. Since our multi regression residuals showed that the was not capturing some important location dependent factors that influence housing prices.
+
+### **4.1 Building Fixed Bandwidth GWR Model**
+
+#### 4.1.1 Computing fixed bandwith
+
+```{r}
+bw.fixed <- bw.gwr(
+  formula = resale_price ~ floor_area_sqm + AGE + PROX_ELDERCARE + PROX_PRESCHOOL +
+    PROX_HAWKER + PROX_PARK +
+    PROX_SUPERMARKET + 
+    STOREY_MID + PROX_CHASCLINIC + PROX_TRAINSTATION,
+  data=HDBresale_sf, 
+  approach="CV", 
+  kernel="gaussian", 
+  adaptive=FALSE, 
+  longlat=FALSE)
+```
+
+The optimal fixed bandwidth for the GWR model was determined using cross-validation. During the search, *bw.gwr()* evaluated a wide range of candidate bandwidths, beginning with very large neighbourhood sizes (≈19 km) and systematically shrinking them while tracking changes in the CV score. The CV score decreased rapidly as the bandwidth narrowed, indicating that smaller neighbourhoods better capture local variation in HDB resale prices. The score eventually stabilised and reached its minimum at approximately **531 metres**, which the algorithm selected as the optimal fixed bandwidth.
+
+This result implies that the relationship between housing attributes and resale prices varies meaningfully over relatively small spatial scales—roughly **a 500 m radius**, i.e., the scale of a typical HDB precinct. Observations within this distance exert the strongest influence on each local regression, while those farther away are down-weighted under the Gaussian kernel.
+
+Since our data is stored in a projected coordinate system, specifically EPSG 3414, the units are in meters.
+
+#### 4.1.2 GWModel method - fixed bandwith
+
+We are now fitting the **Geographically Weighted Regression (GWR)** model using the optimal fixed bandwidth obtained earlier (\~531 m). The function **`gwr.basic()`** calibrates a separate local regression equation for every HDB transaction point, allowing the coefficients to vary across space rather than assuming a single global relationship.
+
+```{r}
+gwr.fixed <- gwr.basic(
+  formula = resale_price ~ floor_area_sqm + AGE + PROX_ELDERCARE + PROX_PRESCHOOL +
+    PROX_HAWKER + PROX_PARK +
+    PROX_SUPERMARKET + 
+    STOREY_MID + PROX_CHASCLINIC + PROX_TRAINSTATION,
+  data=HDBresale_sf, 
+  bw=bw.fixed, 
+  kernel = 'gaussian',
+  longlat = FALSE)
+```
+
+```{r}
+gwr.fixed
+```
+
+The AICc of the GWR model (97,538.47) is substantially lower than that of the global multiple linear regression model (107,183.6). Because AICc penalizes model complexity, this reduction indicates a significantly better model fit even after accounting for GWR’s larger number of effective parameters. Combined with the sharp reduction in residual sum of squares and the increase in R² from 0.465 (MLR) to 0.966 (GWR), the results strongly suggest that spatially varying relationships are present. Therefore, GWR captures important local housing market dynamics that the global MLR model fails to detect.\
+
+### **4.2 Building Adaptive Bandwidth GWR Model**
+
+Because HDB resale transactions are not evenly distributed across Singapore, a fixed bandwidth is not suitable. In dense regions (e.g., Jurong, Tampines, Bukit Merah), a fixed distance would include too many neighbouring transactions, causing excessive smoothing. In contrast, sparse regions (e.g., Sembawang, Lim Chu Kang, Tengah) would include too few neighbours, leading to unstable and unreliable local regressions. Using an **adaptive bandwidth** ensures that each local model uses a consistent number of nearby observations, resulting in more stable and meaningful GWR estimates across varying spatial densities.
+
+#### 4.2.1 Computing the adaptive bandwidth
+
+```{r}
+bw.adaptive <- bw.gwr(
+  formula = resale_price ~ floor_area_sqm + AGE + PROX_ELDERCARE + PROX_PRESCHOOL +
+    PROX_HAWKER + PROX_PARK +
+    PROX_SUPERMARKET + 
+    STOREY_MID + PROX_CHASCLINIC + PROX_TRAINSTATION,
+  data=HDBresale_sf,
+  approach="CV", 
+  kernel="gaussian", 
+  adaptive=TRUE, 
+  longlat=FALSE)
+```
+
+The cross-validation procedure identified an adaptive bandwidth of 34 nearest neighbours, which minimizes the prediction error. This indicates that the housing price relationships are highly localised, with each location requiring only a small subset of nearby observations to model the spatially varying effects effectively.
+
+#### 4.2.2 Constructing the adaptive bandwidth gwr model
+
+```{r}
+gwr.adaptive <- gwr.basic(
+  formula = resale_price ~ floor_area_sqm + AGE + PROX_ELDERCARE + PROX_PRESCHOOL +
+    PROX_HAWKER + PROX_PARK +
+    PROX_SUPERMARKET + 
+    STOREY_MID + PROX_CHASCLINIC + PROX_TRAINSTATION,
+  data=HDBresale_sf,
+  bw=bw.adaptive, 
+  kernel = 'gaussian', 
+  adaptive=TRUE, 
+  longlat = FALSE)
+```
+
+```{r}
+gwr.adaptive
+```
+
+Both fixed and adaptive GWR models were estimated to account for the spatial heterogeneity present in HDB resale prices. Although adaptive GWR is typically preferred for datasets with uneven spatial distributions—because it adjusts the bandwidth based on local data density—the results from our analysis indicate that the **fixed-bandwidth GWR performs better for this study**. The fixed model, calibrated using a constant spatial distance of approximately 531 metres, achieved a substantially **lower AICc (97,538.47)** and **smaller residual sum of squares (3.97 × 10¹²)** compared to the adaptive model (AICc = 98,816.61; RSS = 5.94 × 10¹²). It also recorded a **higher R² (0.966)**, indicating a stronger overall fit.
+
+### **4.3 Visualising GWR Output**
+
+### **4.4 Converting SDF into *sf* data.frame**
+
+We take the GWR results (stored in `gwr.fixed$SDF`) and turn them into an `sf` object so we can map fields like `Local_R2`, `yhat`, coefficients, etc.
+
+```{r}
+HDBresale_sf.fixed <-
+  st_as_sf(gwr.fixed$SDF) %>%
+  st_transform(crs=3414)
+```
+
+```{r}
+glimpse(HDBresale_sf.fixed)
+```
+
+```{r}
+summary(gwr.fixed$SDF$yhat)
+```
+
+Predicted resale prices range from **≈ \$468k to \$1.63M**, with a median around **\$734k**, which looks realistic for 5-room HDBs.
+
+### **4.5 Visualising local R2**
+
+We plot each transaction coloured by its **local R²** from the fixed-bandwidth GWR.
+
+```{r}
+tmap_mode("plot")
+tm_shape(mpsz_svy21)+
+  tm_polygons(fill_alpha = 0.1) +
+tm_shape(HDBresale_sf.fixed) +  
+  tm_dots(col = "Local_R2",
+          border.col = "gray60",
+          border.lwd = 1) +
+  tm_view(set.zoom.limits = c(11,14))
+
+tmap_mode("plot")
+```
+
+The Local R² map shows that the fixed GWR model achieves very high explanatory power across most of Singapore, with many neighbourhoods exhibiting Local R² values above 0.9. Areas with slightly lower Local R² highlight pockets where additional local factors—beyond the included structural and proximity variables—may be influencing HDB resale prices.
+
+### **4.6 Visualising coefficient estimates**
+
+We will visualize all the coefficients estimates
+
+```{r}
+tmap_mode("plot")
+
+# 1. Get base map
+base_map <- tm_shape(mpsz_svy21) + tm_polygons(alpha = 0.1)
+
+# 2. Identify all SE fields
+se_vars <- grep("_SE$", names(HDBresale_sf.fixed), value = TRUE)
+
+# 3. Loop and produce arranged maps
+plot_list <- lapply(se_vars, function(se_var) {
+  
+  # matching TV variable
+  tv_var <- sub("_SE$", "_TV", se_var)
+  
+  # pretty title
+  var_name <- sub("_SE$", "", se_var)
+  
+  # SE map
+  map_se <- base_map +
+    tm_shape(HDBresale_sf.fixed) +
+    tm_dots(col = se_var,
+            border.col = "gray60",
+            border.lwd = 1) +
+    tm_layout(title = paste0(var_name, " (Std. Error)"))
+  
+  # TV map
+  map_tv <- base_map +
+    tm_shape(HDBresale_sf.fixed) +
+    tm_dots(col = tv_var,
+            border.col = "gray60",
+            border.lwd = 1) +
+    tm_layout(title = paste0(var_name, " (t-value)"))
+  
+  # Arrange side-by-side
+  tmap_arrange(map_se, map_tv, asp = 1, ncol = 2, sync = TRUE)
+})
+
+# 4. Display all maps
+plot_list
+
+```
+
+**Floor Area (floor_area_sqm)**
+
+Floor area has consistently low standard errors in dense, mature estates, indicating highly stable coefficient estimates. Its t-values are strongly positive across most of Singapore, confirming that floor size is a universally significant driver of resale price.
+
+**Age of Flat (AGE)**
+
+AGE shows low standard errors in central and established towns, suggesting reliable estimation. The t-values are strongly negative almost everywhere, indicating that older flats systematically command lower resale prices.
+
+**Proximity to Eldercare (PROX_ELDERCARE)**
+
+Standard errors are higher in peripheral or newly developed towns, showing instability in sparse areas. T-values are generally weak or inconsistent, implying that eldercare proximity has little or highly localised influence on resale prices.
+
+**Proximity to Preschool (PROX_PRESCHOOL)**
+
+Standard errors are moderate across most regions, with slightly higher values in fringe areas. T-values vary between positive and negative clusters, revealing that preschool proximity affects prices differently depending on neighbourhood context.
+
+**Proximity to Hawker Centre (PROX_HAWKER)**
+
+Standard errors are low in areas with dense hawker distributions, suggesting stable coefficient estimation. T-values are strongly negative in many towns, indicating that being farther from hawkers tends to reduce resale prices.
+
+**Proximity to Park (PROX_PARK)**
+
+Standard errors vary considerably, with more stability in park-rich regions like the East. T-values show mixed directionality, meaning the value of park proximity differs widely across Singapore.
+
+**Proximity to Supermarket (PROX_SUPERMARKET)**
+
+This variable exhibits higher standard errors in less urbanised zones, showing weaker reliability. T-values are generally small and inconsistent, suggesting that supermarket access is not a major differentiator of resale prices.
+
+**Mid-Storey Indicator (STOREY_MID)**
+
+Standard errors are low and stable island-wide, indicating very reliable coefficient estimates. T-values are strongly positive everywhere, confirming that mid-storey flats consistently command a significant price premium.
+
+**Proximity to CHAS Clinic (PROX_CHASCLINIC)**
+
+Standard errors are moderate, with greater uncertainty in outer regions. T-values are mostly negative and significant in central and eastern towns, showing that households value closer access to subsidised clinics.
+
+**Proximity to Train Station (PROX_TRAINSTATION)**
+
+Standard errors are low in MRT-dense regions, reflecting strong data support. T-values are largely negative, indicating that proximity to train stations increases prices, though some areas show positive effects likely due to noise or structural factors.\
+
+## Conclusion
+
+We progressively transitioned from a simple linear regression to a multiple linear regression and finally to a Geographically Weighted Regression (GWR). This stepwise approach allowed us to increasingly capture the spatial structure embedded in the housing market. GWR, in particular, provided a much more suitable modelling framework by accounting for spatial heterogeneity and allowing relationships between predictors and resale prices to vary across Singapore. As a result, the final model better reflects the true spatial dynamics influencing HDB resale prices and produces a more robust and geographically sensitive prediction system.
